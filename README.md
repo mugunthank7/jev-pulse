@@ -20,7 +20,7 @@ Real `typesafe/jev-1.13` calls through OpenRouter on this dataset (cost is the b
 |---|---|---|---|
 | 120 issues, 5 typed questions each | 78% (94/120) | ~380 ms | $0.0037 (about $0.031 per 1,000 issues) |
 
-Claude and Gemini comparisons run in the **Model race** tab (same issues, same five questions, same label definitions). Early partial runs on a credit-less account showed the cheaper models (Claude Haiku 4.5, Gemini 3.8 Flash) landing in a similar accuracy band as Jev at roughly 4-17x its cost and 2-5x its latency, but samples were small and several rows were incomplete, so I'm not publishing those as results. Run the race on a funded account with 100+ issues before quoting numbers.
+Claude and Gemini comparisons run in the **Model race** tab (same issues, same five questions, same label definitions). My early runs were on a credit-less account where several rows were incomplete and samples were small, so I'm not publishing Claude or Gemini numbers yet. Run the race on a funded account with 100+ issues before quoting numbers.
 
 ## Quick start
 
