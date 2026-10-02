@@ -2,7 +2,10 @@ import { useCallback, useState } from "react";
 import type { ScoredItem } from "@jev-pulse/schema";
 import { Feed } from "./components/Feed";
 import { Hud } from "./components/Hud";
+import { Links } from "./components/Links";
+import { Race } from "./components/Race";
 import { Radar } from "./components/Radar";
+import { useRace } from "./lib/race";
 import { useJevStream, type StreamParams } from "./lib/stream";
 
 const PRESETS: { label: string; params: StreamParams }[] = [
@@ -13,6 +16,8 @@ const PRESETS: { label: string; params: StreamParams }[] = [
 
 export default function App() {
   const { state, start, stop } = useJevStream();
+  const race = useRace();
+  const [view, setView] = useState<"radar" | "race">("radar");
   const [hovered, setHovered] = useState<ScoredItem | null>(null);
   const [active, setActive] = useState(0);
   const [repo, setRepo] = useState("");
@@ -22,12 +27,25 @@ export default function App() {
 
   return (
     <div className="relative h-full w-full overflow-hidden">
-      <Radar items={state.items} onHover={onHover} />
+      {view === "radar" && <Radar items={state.items} running={state.running} onHover={onHover} />}
+      {view === "race" && <Race rows={race.rows} running={race.running} total={race.total} />}
       <header className="pointer-events-none absolute top-0 left-0 z-10 flex w-full flex-col gap-3 p-4 sm:p-6">
         <div className="pointer-events-auto flex flex-wrap items-center gap-x-4 gap-y-2">
           <h1 className="text-xl font-semibold tracking-tight">Jev <span className="bg-gradient-to-r from-cyan-300 to-fuchsia-300 bg-clip-text text-transparent">Pulse</span></h1>
-          <span className="hidden text-xs text-white/40 sm:inline">typed, calibrated decisions at stream speed</span>
+          <span className="hidden text-xs text-white/40 md:inline">typed, calibrated decisions at stream speed</span>
+          <div className="flex rounded-full border border-white/10 bg-white/5 p-0.5 text-xs">
+            {(["radar", "race"] as const).map((v) => (
+              <button key={v} onClick={() => setView(v)} className={`rounded-full px-3 py-1 capitalize transition ${view === v ? "bg-white/15 text-white" : "text-white/50 hover:text-white"}`}>{v === "race" ? "Model race" : "Radar"}</button>
+            ))}
+          </div>
+          <div className="ml-auto"><Links /></div>
         </div>
+        {view === "race" ? (
+          <div className="pointer-events-auto flex flex-wrap items-center gap-2">
+            <button onClick={() => race.start("hn", 20)} disabled={race.running} className="rounded-full bg-gradient-to-r from-cyan-400 to-fuchsia-400 px-4 py-1.5 text-xs font-semibold text-black disabled:opacity-50">{race.running ? "Racing…" : "Start race"}</button>
+            <button onClick={() => race.start("synthetic", 30)} disabled={race.running} className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs hover:bg-white/10 disabled:opacity-50">Synthetic · 30 items</button>
+          </div>
+        ) : (
         <div className="pointer-events-auto flex flex-wrap items-center gap-2">
           {PRESETS.map((p, i) => (
             <button key={p.label} onClick={() => run(i)} className={`rounded-full border px-3 py-1.5 text-xs transition ${active === i && state.startedAt ? "border-white/40 bg-white/15" : "border-white/10 bg-white/5 hover:bg-white/10"}`}>{p.label}</button>
@@ -38,10 +56,11 @@ export default function App() {
           </form>
           {state.running && <button onClick={stop} className="rounded-full border border-rose-400/30 bg-rose-400/10 px-3 py-1.5 text-xs text-rose-200">Stop</button>}
         </div>
-        {state.error && <div className="pointer-events-auto max-w-md rounded-lg border border-rose-400/30 bg-rose-950/60 px-3 py-2 text-xs text-rose-200">{state.error}</div>}
+        )}
+        {(view === "radar" ? state.error : race.error) && <div className="pointer-events-auto max-w-md rounded-lg border border-rose-400/30 bg-rose-950/60 px-3 py-2 text-xs text-rose-200">{view === "radar" ? state.error : race.error}</div>}
       </header>
 
-      {!state.startedAt && (
+      {view === "radar" && !state.startedAt && (
         <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center">
           <div className="text-center">
             <div className="font-mono text-[11px] uppercase tracking-[0.3em] text-white/30">system one · idle</div>
@@ -50,10 +69,12 @@ export default function App() {
         </div>
       )}
 
+      {view === "radar" && (
       <aside className="absolute right-0 bottom-0 z-10 flex w-full flex-col gap-3 p-4 sm:top-24 sm:w-auto sm:p-6">
         <Hud state={state} />
         <Feed items={state.items} hovered={hovered} />
       </aside>
+      )}
     </div>
   );
 }

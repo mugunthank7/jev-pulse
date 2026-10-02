@@ -6,6 +6,14 @@ Jev Pulse streams a feed (Hacker News, any GitHub repo's issues, or a 1,000-item
 
 > Add a hero GIF here: `docs/hero.gif` (record the **Burst · 1,000 items** preset).
 
+## Model Race: Jev vs Claude vs Gemini
+
+The **Model race** tab runs the *same* items and the *same* five questions through Jev, Claude Haiku 4.5, Sonnet 5.5, Opus 5.5 and two Gemini models, streaming latency and cost bars live (log/linear toggle).
+
+- Add `ANTHROPIC_API_KEY` and/or `GEMINI_API_KEY` to `.env` and those rows become **measured**: real API calls, wall-clock latency, billed tokens (Gemini thinking tokens count as output).
+- Without a key a row is **modeled** (hatched bars, labelled): typical latency and token counts, not measurements. Nothing is presented as measured unless it was.
+- Gemini model IDs and prices change often. Verify them, and override the IDs with `GEMINI_FAST_MODEL` / `GEMINI_PRO_MODEL`.
+
 ## Why Jev?
 
 Jev does not write text. Given some state and typed questions (`choice`, `score`, `noul` = yes/no) it returns calibrated probabilities in one parallel pass. According to TypeSafe's published figures that is roughly 70-500 ms and about $0.0004 per decision, around 76x cheaper than a frontier LLM, with no schema errors. That makes it a fit for the high-volume "which of these 10,000 things matters?" layer in front of an LLM. Jev Pulse makes that scale visible, and flags low-confidence items to **escalate to an LLM**.
@@ -45,7 +53,7 @@ Tools: `triage_feed` (rank a HN or GitHub feed by urgency x actionability) and `
 
 ```
 HN / GitHub / synthetic ──> apps/api (Hono) ──> DecisionBackend ──> mock | jev | kev
-                               │  SSE /api/stream   POST /api/score   GET /api/triage
+                               │  SSE /api/stream   POST /api/score   GET /api/triage   GET /api/compare (model race)
                                ▼
                        apps/web (React 19 + Canvas)   packages/mcp (stdio MCP)
                                ▲
@@ -63,6 +71,10 @@ Stack: TypeScript, React 19, Vite, Tailwind CSS v4, Hono, Zod, Vitest, Model Con
 - WebGPU renderer (instanced, compute-driven) with the current Canvas2D path as fallback
 - Cloudflare Workers deploy for the API
 - Paste / CSV upload mode
+
+## Author
+
+[LinkedIn](https://www.linkedin.com/in/mugunthankesavan/) · [GitHub](https://github.com/mugunthank7)
 
 ## License
 

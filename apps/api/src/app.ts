@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { createBackend, type DecisionBackend } from "./backends/index.ts";
+import { runRace } from "./compare/race.ts";
 import { githubIssues, hackerNews, synthetic } from "./sources/index.ts";
 
 /** Scores items with bounded concurrency; calls onScored as each finishes. */
@@ -62,6 +63,27 @@ export function createApp(backend: DecisionBackend = createBackend()) {
     const out: ScoredItem[] = [];
     await scoreAll(backend, parsed.data.items, (s) => void out.push(s));
     return c.json({ backend: backend.name, items: out });
+  });
+
+  /** Model race: Jev vs Claude vs Gemini on the same items, streamed as SSE progress. */
+  app.get("/api/compare", (c) => {
+    const source = c.req.query("source") ?? "hn";
+    const limit = Math.min(Number(c.req.query("limit") ?? 20) || 20, 60);
+    return streamSSE(c, async (stream) => {
+      const ac = new AbortController();
+      stream.onAbort(() => ac.abort());
+      try {
+        const items =
+          source === "github" ? await githubIssues(c.req.query("repo") ?? "", limit)
+          : source === "synthetic" ? synthetic(limit)
+          : await hackerNews(limit);
+        await stream.writeSSE({ event: "start", data: JSON.stringify({ total: items.length, source }) });
+        await runRace(backend, items, (p) => stream.writeSSE({ event: "progress", data: JSON.stringify(p) }), process.env, ac.signal);
+        await stream.writeSSE({ event: "done", data: "{}" });
+      } catch (err) {
+        await stream.writeSSE({ event: "error", data: JSON.stringify({ message: err instanceof Error ? err.message : String(err) }) });
+      }
+    });
   });
 
   /** Ranked triage: score a source and return the top N by urgency x actionability. */
