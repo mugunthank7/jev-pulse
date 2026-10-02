@@ -71,3 +71,32 @@ describe("llm output parsing", () => {
     expect(() => parseCategory("no json here")).toThrow();
   });
 });
+
+describe("arena", () => {
+  it("sends the same issue to all three lanes each round and reports per-call results", async () => {
+    const { runArena } = await import("./compare/arena.ts");
+    const items = [
+      { id: "a", text: "crash on start", source: "t", label: "bug" as const },
+      { id: "b", text: "how do I use this", source: "t", label: "question" as const },
+    ];
+    const lanes = [
+      { id: "jev" as const, label: "Jev", model: "j" },
+      { id: "gemini" as const, label: "G", model: "g" },
+      { id: "claude" as const, label: "C", model: "c" },
+    ];
+    const events: { type: string; lane?: string; correct?: boolean; round?: number }[] = [];
+    // Stub the LLM call: Gemini always says "bug", Claude fails once with a 429 then succeeds.
+    let claudeCalls = 0;
+    const call = async (model: string) => {
+      if (model === "c" && claudeCalls++ === 0) throw new Error("c 429: rate limited");
+      return { category: model === "g" ? "bug" : "question", costUsd: 0.001, inTokens: 10, outTokens: 5, latencyMs: 5 };
+    };
+    await runArena(new MockBackend(), items, lanes, (e) => void events.push(e), { key: "k", gapMs: 0, call });
+    const results = events.filter((e) => e.type === "result");
+    expect(results).toHaveLength(6); // 2 rounds x 3 lanes
+    expect(events.filter((e) => e.type === "dispatch")).toHaveLength(2);
+    expect(events.some((e) => e.type === "retry" && e.lane === "claude")).toBe(true);
+    expect(results.filter((r) => r.lane === "gemini").map((r) => r.correct)).toEqual([true, false]);
+    expect(events.at(-1)!.type).toBe("done");
+  }, 30_000);
+});

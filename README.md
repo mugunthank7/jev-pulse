@@ -20,7 +20,7 @@ Real `typesafe/jev-1.13` calls through OpenRouter on this dataset (cost is the b
 |---|---|---|---|
 | 120 issues, 5 typed questions each | 78% (94/120) | ~380 ms | $0.0037 (about $0.031 per 1,000 issues) |
 
-Claude and Gemini comparisons run in the **Model race** tab (same issues, same five questions, same label definitions). My early runs were on a credit-less account where several rows were incomplete and samples were small, so I'm not publishing Claude or Gemini numbers yet. Run the race on a funded account with 100+ issues before quoting numbers.
+Claude and Gemini comparisons run in the **Live arena** tab: the same issue flies into three lanes (Jev, Gemini, Claude) at once, each with its own live timer, billed cost and accuracy. My early runs were on a credit-less account where several rows were incomplete and samples were small, so I'm not publishing Claude or Gemini numbers yet. Run the race on a funded account with 100+ issues before quoting numbers.
 
 ## Quick start
 

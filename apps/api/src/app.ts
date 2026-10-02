@@ -3,7 +3,8 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { createBackend, type DecisionBackend } from "./backends/index.ts";
-import { runRace } from "./compare/race.ts";
+import { runArena, type ArenaLane } from "./compare/arena.ts";
+import { LANE_OPTIONS, resolveModel } from "./compare/models.ts";
 import { datasetRepos, loadSource } from "./sources/index.ts";
 
 /** Scores items with bounded concurrency; calls onScored as each finishes. */
@@ -62,19 +63,28 @@ export function createApp(backend: DecisionBackend = createBackend()) {
     return c.json({ backend: backend.name, items: out });
   });
 
-  /** Model race: Jev vs Claude vs Gemini on the same items, streamed as SSE progress. */
-  app.get("/api/compare", (c) => {
-    const source = c.req.query("source") ?? "dataset";
+  /** Which models each lane can use (single source of truth for the UI's pickers). */
+  app.get("/api/arena/models", (c) => c.json({ ...LANE_OPTIONS, jev: { label: backend.name === "mock" ? "Jev (offline mock)" : "Jev 1.13", backend: backend.name } }));
+
+  /** Live arena: the same labeled issues go to Jev, Gemini and Claude at once; events stream per call. */
+  app.get("/api/arena", (c) => {
+    const gemini = resolveModel("gemini", c.req.query("gemini")), claude = resolveModel("claude", c.req.query("claude"));
+    if (!gemini || !claude) return c.json({ error: "unknown model" }, 400);
+    const lanes: ArenaLane[] = [
+      { id: "jev", label: backend.name === "mock" ? "Jev (offline mock)" : "Jev 1.13", model: "typesafe/jev-1.13" },
+      { id: "gemini", label: gemini.label, model: gemini.model },
+      { id: "claude", label: claude.label, model: claude.model },
+    ];
     return streamSSE(c, async (stream) => {
       const ac = new AbortController();
       stream.onAbort(() => ac.abort());
       try {
-        const items = await loadSource((k) => c.req.query(k), 30, 60);
-        await stream.writeSSE({ event: "start", data: JSON.stringify({ total: items.length, source }) });
-        await runRace(backend, items, (p) => stream.writeSSE({ event: "progress", data: JSON.stringify(p) }), process.env, ac.signal);
-        await stream.writeSSE({ event: "done", data: "{}" });
+        const items = await loadSource((k) => (k === "source" ? "dataset" : c.req.query(k)), 20, 60);
+        await runArena(backend, items, lanes, (e) => stream.writeSSE({ event: e.type, data: JSON.stringify(e) }), {
+          key: process.env.OPENROUTER_API_KEY, gapMs: Number(process.env.RACE_MIN_INTERVAL_MS ?? 3200), signal: ac.signal,
+        });
       } catch (err) {
-        await stream.writeSSE({ event: "error", data: JSON.stringify({ message: err instanceof Error ? err.message : String(err) }) });
+        await stream.writeSSE({ event: "fatal", data: JSON.stringify({ message: err instanceof Error ? err.message : String(err) }) });
       }
     });
   });

@@ -29,7 +29,7 @@ export async function callModel(model: string, item: Item, apiKey: string): Prom
     headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
       model,
-      max_tokens: 400, // the JSON answer needs ~60; a small cap also keeps OpenRouter's in-flight budget reservation low
+      max_tokens: 300, // the JSON answer needs ~60; a small cap also keeps OpenRouter's in-flight budget reservation low
       usage: { include: true },
       reasoning: { effort: "low" }, // simple bounded task: keep thinking cheap and the comparison fair
       messages: [{ role: "user", content: PROMPT(item.text) }],
