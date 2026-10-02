@@ -1,7 +1,7 @@
 import { CATEGORIES, ESCALATE_BELOW, overallConfidence, type ScoredItem } from "@jev-pulse/schema";
 
 export const CATEGORY_HUE: Record<string, number> = {
-  bug: 350, feature: 160, question: 205, security: 28, discussion: 275, news: 52,
+  bug: 350, feature: 160, question: 205,
 };
 
 export type Particle = {
@@ -34,7 +34,7 @@ export class Sim {
     // Keep the radar clear of the right-hand HUD/feed column on wide screens.
     this.cx = wide ? (w - 380) / 2 + 40 : w / 2;
     this.cy = wide ? h * 0.56 : h * 0.42;
-    this.radius = Math.min(wide ? w - 380 : w, wide ? h * 0.92 : h * 0.8) * 0.31;
+    this.radius = Math.min(wide ? w - 380 : w, wide ? h * 0.92 : h * 0.8) * 0.3;
     const counts = new Map(this.anchors.map((a) => [a.label, a.count]));
     this.anchors = CATEGORIES.map((label, i) => {
       const a = (i / CATEGORIES.length) * Math.PI * 2 - Math.PI / 2;

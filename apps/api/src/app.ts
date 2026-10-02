@@ -4,7 +4,7 @@ import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import { createBackend, type DecisionBackend } from "./backends/index.ts";
 import { runRace } from "./compare/race.ts";
-import { githubIssues, hackerNews, synthetic } from "./sources/index.ts";
+import { datasetRepos, loadSource } from "./sources/index.ts";
 
 /** Scores items with bounded concurrency; calls onScored as each finishes. */
 export async function scoreAll(
@@ -19,8 +19,8 @@ export async function scoreAll(
     while (next < items.length && !signal?.aborted) {
       const item = items[next++]!;
       try {
-        const { decision, latencyMs } = await backend.decide(item);
-        await onScored({ ...item, decision, latencyMs, costUsd: jevCost(item.text), backend: backend.name });
+        const { decision, latencyMs, costUsd } = await backend.decide(item);
+        await onScored({ ...item, decision, latencyMs, costUsd: costUsd ?? jevCost(item.text), backend: backend.name, correct: item.label ? decision.category.label === item.label : undefined });
       } catch (err) {
         console.error(`[score] ${item.id}:`, err instanceof Error ? err.message : err);
       }
@@ -34,19 +34,16 @@ export function createApp(backend: DecisionBackend = createBackend()) {
   app.use("/api/*", cors());
 
   app.get("/api/health", (c) => c.json({ ok: true, backend: backend.name }));
+  app.get("/api/repos", (c) => c.json({ repos: datasetRepos() }));
 
   /** Server-sent events: fetch a source, score every item, stream results as they land. */
   app.get("/api/stream", (c) => {
-    const source = c.req.query("source") ?? "hn";
-    const limit = Math.min(Number(c.req.query("limit") ?? 120) || 120, 1000);
+    const source = c.req.query("source") ?? "dataset";
     return streamSSE(c, async (stream) => {
       const ac = new AbortController();
       stream.onAbort(() => ac.abort());
       try {
-        const items =
-          source === "github" ? await githubIssues(c.req.query("repo") ?? "", limit)
-          : source === "synthetic" ? synthetic(limit)
-          : await hackerNews(limit);
+        const items = await loadSource((k) => c.req.query(k), 120, 400);
         await stream.writeSSE({ event: "start", data: JSON.stringify({ total: items.length, backend: backend.name, source }) });
         await scoreAll(backend, items, (s) => stream.writeSSE({ event: "item", data: JSON.stringify(s) }), 16, ac.signal);
         await stream.writeSSE({ event: "done", data: "{}" });
@@ -67,16 +64,12 @@ export function createApp(backend: DecisionBackend = createBackend()) {
 
   /** Model race: Jev vs Claude vs Gemini on the same items, streamed as SSE progress. */
   app.get("/api/compare", (c) => {
-    const source = c.req.query("source") ?? "hn";
-    const limit = Math.min(Number(c.req.query("limit") ?? 20) || 20, 60);
+    const source = c.req.query("source") ?? "dataset";
     return streamSSE(c, async (stream) => {
       const ac = new AbortController();
       stream.onAbort(() => ac.abort());
       try {
-        const items =
-          source === "github" ? await githubIssues(c.req.query("repo") ?? "", limit)
-          : source === "synthetic" ? synthetic(limit)
-          : await hackerNews(limit);
+        const items = await loadSource((k) => c.req.query(k), 30, 60);
         await stream.writeSSE({ event: "start", data: JSON.stringify({ total: items.length, source }) });
         await runRace(backend, items, (p) => stream.writeSSE({ event: "progress", data: JSON.stringify(p) }), process.env, ac.signal);
         await stream.writeSSE({ event: "done", data: "{}" });
@@ -88,14 +81,9 @@ export function createApp(backend: DecisionBackend = createBackend()) {
 
   /** Ranked triage: score a source and return the top N by urgency x actionability. */
   app.get("/api/triage", async (c) => {
-    const source = c.req.query("source") ?? "hn";
-    const limit = Math.min(Number(c.req.query("limit") ?? 60) || 60, 500);
     const top = Math.min(Number(c.req.query("top") ?? 10) || 10, 50);
     try {
-      const items =
-        source === "github" ? await githubIssues(c.req.query("repo") ?? "", limit)
-        : source === "synthetic" ? synthetic(limit)
-        : await hackerNews(limit);
+      const items = await loadSource((k) => c.req.query(k), 60, 500);
       const scored: ScoredItem[] = [];
       await scoreAll(backend, items, (s) => void scored.push(s));
       const rank = (s: ScoredItem) => (s.decision.urgency.value / 100) * s.decision.actionable.p * (1 - s.decision.spam.p);

@@ -2,12 +2,9 @@ import { CATEGORIES, type Category, type Decision, type Item } from "@jev-pulse/
 import type { DecisionBackend } from "./types.ts";
 
 const KEYWORDS: Record<Category, string[]> = {
-  bug: ["bug", "crash", "error", "fail", "broken", "regression", "exception", "fix", "panic"],
-  feature: ["feature", "add", "support", "proposal", "request", "implement", "launch", "release"],
-  question: ["how", "why", "what", "?", "help", "anyone", "ask hn", "should i"],
-  security: ["security", "vulnerab", "cve", "exploit", "leak", "breach", "malware", "auth"],
-  discussion: ["show hn", "opinion", "discuss", "thoughts", "essay", "vs", "future"],
-  news: ["announce", "raises", "acquires", "report", "study", "new", "introduces"],
+  bug: ["bug", "crash", "error", "fail", "broken", "regression", "exception", "traceback", "panic", "wrong"],
+  feature: ["feature", "add", "support", "proposal", "request", "implement", "enh", "improve", "allow"],
+  question: ["how", "why", "what", "?", "help", "anyone", "qst", "should i", "is there"],
 };
 const NEG = ["crash", "fail", "broken", "bug", "leak", "breach", "vulnerab", "outage", "error", "bad", "worst"];
 const POS = ["great", "fast", "love", "launch", "release", "thanks", "faster", "better", "open source", "show hn"];
@@ -31,8 +28,8 @@ function softmax(raw: number[]): number[] {
 }
 
 /**
- * Deterministic stand-in with realistic latency so the demo, tests and CI run
- * without an API key. It is NOT Jev: it exists so the pipeline is runnable.
+ * Offline stand-in used ONLY when no OPENROUTER_API_KEY is set (tests, CI, first run).
+ * It is NOT Jev: keyword heuristics with Jev-like latency so the pipeline is runnable.
  */
 export class MockBackend implements DecisionBackend {
   readonly name = "mock";
@@ -50,7 +47,7 @@ export class MockBackend implements DecisionBackend {
     const urgency = clamp(18 + count(t, URGENT) * 24 + noise("u") * 28, 0, 100);
     const sentiment = clamp((count(t, POS) - count(t, NEG)) * 0.35 + (noise("s") - 0.5) * 0.4, -1, 1);
     const spam = clamp(count(t, SPAM) * 0.45 + noise("sp") * 0.08, 0, 1);
-    const actionable = clamp(0.25 + count(t, [...KEYWORDS.bug, ...KEYWORDS.security]) * 0.2 + noise("a") * 0.25, 0, 1);
+    const actionable = clamp(0.25 + count(t, [...KEYWORDS.bug, "steps to reproduce", "version"]) * 0.2 + noise("a") * 0.25, 0, 1);
 
     const decision: Decision = {
       category: { label: CATEGORIES[best]!, probs, confidence: probsArr[best]! },

@@ -10,7 +10,7 @@ export type StreamState = {
   startedAt: number | null;
   elapsedMs: number;
 };
-export type StreamParams = { source: "hn" | "github" | "synthetic"; repo?: string; limit: number };
+export type StreamParams = { source: "dataset" | "github"; repo?: string; limit: number };
 
 const initial: StreamState = { items: [], total: 0, running: false, backend: "-", error: null, startedAt: null, elapsedMs: 0 };
 

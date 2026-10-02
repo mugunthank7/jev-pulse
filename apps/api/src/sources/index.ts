@@ -1,57 +1,61 @@
-import type { Item } from "@jev-pulse/schema";
+import { readFileSync } from "node:fs";
+import type { Category, Item } from "@jev-pulse/schema";
 
 const UA = { "user-agent": "jev-pulse (portfolio demo)" };
 
-async function json<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, { ...init, headers: { ...UA, ...init?.headers } });
-  if (!res.ok) throw new Error(`${url} -> ${res.status}`);
-  return (await res.json()) as T;
+type DatasetRow = { id: string; repo: string; url: string; title: string; body: string; label: Category };
+let cache: DatasetRow[] | undefined;
+
+function load(): DatasetRow[] {
+  cache ??= (JSON.parse(readFileSync(new URL("../../../../data/github-issues.json", import.meta.url), "utf8")) as { items: DatasetRow[] }).items;
+  return cache;
 }
 
-/** Hacker News: top stories, no API key needed. */
-export async function hackerNews(limit: number): Promise<Item[]> {
-  const ids = await json<number[]>("https://hacker-news.firebaseio.com/v0/topstories.json");
-  const stories = await Promise.all(
-    ids.slice(0, limit).map((id) => json<{ id: number; title?: string; url?: string; text?: string }>(`https://hacker-news.firebaseio.com/v0/item/${id}.json`).catch(() => null)),
-  );
-  return stories
-    .filter((s): s is NonNullable<typeof s> => !!s?.title)
-    .map((s) => ({
-      id: `hn-${s.id}`,
-      text: (s.title + (s.text ? `. ${s.text.replace(/<[^>]+>/g, " ")}` : "")).slice(0, 1500),
-      url: s.url ?? `https://news.ycombinator.com/item?id=${s.id}`,
-      source: "Hacker News",
-    }));
+/** Small deterministic PRNG so the same seed gives the same sample (reproducible demos and races). */
+function mulberry32(seed: number) {
+  return () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
-/** GitHub issues + PRs for any public repo ("owner/name"). Unauthenticated: 60 req/h. */
+export const datasetRepos = () => [...new Set(load().map((r) => r.repo))];
+
+/**
+ * Real, maintainer-labeled GitHub issues. Class-balanced and shuffled (seeded) so labels interleave.
+ * repo = "all" or an owner/name present in the dataset.
+ */
+export function labeledIssues(limit: number, repo = "all", seed = 7): Item[] {
+  const rnd = mulberry32(seed);
+  const pool = load().filter((r) => repo === "all" || r.repo === repo);
+  const byClass = new Map<Category, DatasetRow[]>();
+  for (const r of pool) byClass.set(r.label, [...(byClass.get(r.label) ?? []), r]);
+  const shuffle = <T>(a: T[]) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [a[i], a[j]] = [a[j]!, a[i]!]; } return a; };
+  const lists = [...byClass.values()].map(shuffle);
+  const out: DatasetRow[] = [];
+  for (let i = 0; out.length < limit && lists.some((l) => i < l.length); i++) for (const l of lists) if (l[i] && out.length < limit) out.push(l[i]!);
+  return shuffle(out).map((r) => ({ id: r.id, text: `${r.title}\n\n${r.body}`.slice(0, 1500), url: r.url, source: r.repo, label: r.label }));
+}
+
+/** Live (unlabeled) open issues for any public repo ("owner/name"). Unauthenticated: 60 req/h. */
 export async function githubIssues(repo: string, limit: number): Promise<Item[]> {
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error("repo must look like owner/name");
-  const headers: Record<string, string> = process.env.GITHUB_TOKEN ? { authorization: `Bearer ${process.env.GITHUB_TOKEN}` } : {};
+  const headers: Record<string, string> = { ...UA, ...(process.env.GITHUB_TOKEN ? { authorization: `Bearer ${process.env.GITHUB_TOKEN}` } : {}) };
   const out: Item[] = [];
   for (let page = 1; out.length < limit && page <= 10; page++) {
-    const rows = await json<{ number: number; title: string; body?: string | null; html_url: string }[]>(
-      `https://api.github.com/repos/${repo}/issues?state=open&per_page=100&page=${page}`,
-      { headers },
-    );
+    const res = await fetch(`https://api.github.com/repos/${repo}/issues?state=open&per_page=100&page=${page}`, { headers });
+    if (!res.ok) throw new Error(`GitHub ${res.status} for ${repo}`);
+    const rows = (await res.json()) as { number: number; title: string; body?: string | null; html_url: string; pull_request?: unknown }[];
     if (!rows.length) break;
-    for (const r of rows) out.push({ id: `gh-${repo}-${r.number}`, text: `${r.title}. ${(r.body ?? "").slice(0, 800)}`, url: r.html_url, source: repo });
+    for (const r of rows) if (!r.pull_request) out.push({ id: `gh-${repo}-${r.number}`, text: `${r.title}\n\n${(r.body ?? "").slice(0, 800)}`, url: r.html_url, source: repo });
   }
   return out.slice(0, limit);
 }
 
-/** Synthetic firehose for burst mode / offline demos. */
-export function synthetic(limit: number): Item[] {
-  const subjects = ["Auth service", "Payment API", "Search index", "Mobile app", "CI pipeline", "Billing page", "Docs site", "Export job", "Webhook handler", "Admin panel"];
-  const events = [
-    "crashes with null pointer on startup", "request: add dark mode support", "how do I configure rate limits?",
-    "possible security vulnerability in token refresh", "thanks, the new release is much faster", "outage: users cannot log in, urgent",
-    "discussion: should we migrate to a monorepo?", "announces new open source release", "regression after upgrading dependencies",
-    "buy now free money click here", "error: timeout when exporting large files", "proposal: support streaming responses",
-  ];
-  return Array.from({ length: limit }, (_, i) => ({
-    id: `syn-${i}`,
-    text: `${subjects[i % subjects.length]} ${events[(i * 7 + (i >> 3)) % events.length]}`,
-    source: "Synthetic firehose",
-  }));
+export type SourceName = "dataset" | "github";
+export async function loadSource(q: (k: string) => string | undefined, defaultLimit: number, max: number): Promise<Item[]> {
+  const limit = Math.min(Number(q("limit") ?? defaultLimit) || defaultLimit, max);
+  return q("source") === "github" ? githubIssues(q("repo") ?? "", limit) : labeledIssues(limit, q("repo") ?? "all");
 }

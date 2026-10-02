@@ -1,76 +1,70 @@
 # Jev Pulse
 
-**Watch thousands of typed, calibrated AI decisions light up a live radar.**
+**Real GitHub issues, classified live by [Jev](https://openrouter.ai/docs/guides/community/jev) and raced against Claude and Gemini, scored against what maintainers actually labeled them.**
 
-Jev Pulse streams a feed (Hacker News, any GitHub repo's issues, or a 1,000-item synthetic firehose) through [Jev](https://www.datacamp.com/blog/system-one-models-jev), TypeSafe AI's "System One" decision model, and renders every answer as a glowing particle. Position is the category, size is urgency, and glow and orbit tightness are the model's calibrated confidence. A HUD tracks decisions, throughput, latency and cost against a frontier LLM.
+Jev is TypeSafe AI's "System One" decision model: it doesn't write text, it answers typed questions (`choice`, `score`, yes/no) with calibrated probabilities in one pass. Jev Pulse streams a labeled dataset through it and draws every decision on a live radar: items enter from the feed, pass the Jev core, and land in their cluster. A red ring means Jev disagreed with the maintainer's label.
 
-> Add a hero GIF here: `docs/hero.gif` (record the **Burst · 1,000 items** preset).
+> Add a hero GIF here: `docs/hero.gif` (record the Radar run, then the Model race).
 
-## Model Race: Jev vs Claude vs Gemini
+## The data (not synthetic)
 
-The **Model race** tab runs the *same* items and the *same* five questions through Jev, Claude Haiku 4.5, Sonnet 5.5, Opus 5.5 and two Gemini models, streaming latency and cost bars live (log/linear toggle).
+`data/github-issues.json` holds **318 real issues** from `pandas-dev/pandas`, `numpy/numpy`, `scikit-learn/scikit-learn` and `microsoft/vscode`. Ground truth is the label a maintainer applied: `bug`, `feature` (enhancement / feature-request) or `question`. Only issues carrying exactly one of the three classes are kept; PRs are dropped. Rebuild with `npm run dataset` (set `GITHUB_TOKEN` for higher rate limits).
 
-- Add `ANTHROPIC_API_KEY` and/or `GEMINI_API_KEY` to `.env` and those rows become **measured**: real API calls, wall-clock latency, billed tokens (Gemini thinking tokens count as output).
-- Without a key a row is **modeled** (hatched bars, labelled): typical latency and token counts, not measurements. Nothing is presented as measured unless it was.
-- Gemini model IDs and prices change often. Verify them, and override the IDs with `GEMINI_FAST_MODEL` / `GEMINI_PRO_MODEL`.
+Maintainer labels are noisy (for example, a `BUG:` titled issue filed as a question), so no model reaches 100%. Read accuracy as relative.
 
-## Why Jev?
+## What I measured
 
-Jev does not write text. Given some state and typed questions (`choice`, `score`, `noul` = yes/no) it returns calibrated probabilities in one parallel pass. According to TypeSafe's published figures that is roughly 70-500 ms and about $0.0004 per decision, around 76x cheaper than a frontier LLM, with no schema errors. That makes it a fit for the high-volume "which of these 10,000 things matters?" layer in front of an LLM. Jev Pulse makes that scale visible, and flags low-confidence items to **escalate to an LLM**.
+Real `typesafe/jev-1.13` calls through OpenRouter on this dataset (cost is the billed amount OpenRouter returns):
 
-Those numbers are the vendor's own and were not independently reproduced here.
+| Run | Accuracy vs labels | Avg latency / issue | Billed cost |
+|---|---|---|---|
+| 120 issues, 5 typed questions each | 78% (94/120) | ~380 ms | $0.0037 (about $0.031 per 1,000 issues) |
 
-## Quick start (no API key needed)
+Claude and Gemini comparisons run in the **Model race** tab (same issues, same five questions, same label definitions). Early partial runs on a credit-less account showed the cheaper models (Claude Haiku 4.5, Gemini 3.8 Flash) landing in a similar accuracy band as Jev at roughly 4-17x its cost and 2-5x its latency, but samples were small and several rows were incomplete, so I'm not publishing those as results. Run the race on a funded account with 100+ issues before quoting numbers.
+
+## Quick start
 
 ```bash
 npm install
-npm run dev        # API on :8787, web on :5173
+cp .env.example .env     # add OPENROUTER_API_KEY
+npm run dev              # API :8787, web :5173
 ```
 
-Open http://localhost:5173 and click **Burst · 1,000 items**. By default the `mock` backend is used: a deterministic stand-in with Jev-like latency, so the demo and CI run anywhere. **It is not Jev**; its probabilities are heuristics.
+Open http://localhost:5173. Without a key the API falls back to an **offline mock** (keyword heuristics, clearly labeled in the UI) so the app and tests still run. It is not Jev.
 
-### Use real Jev
-
-```bash
-cp .env.example .env
-# JEV_BACKEND=jev
-# TYPESAFE_API_KEY=...   (Jev is in early access)
-```
-
-`apps/api/src/backends/jev.ts` posts `{ model: "jev-latest", state, questions }` to `https://api.typesafe.ai/v1/systemone`. The response mapping (`normalise`) is written defensively because it has not yet been verified against a live key. If your response shape differs, that function and its test are the only places to change. Any Jev-compatible endpoint (for example a self-hosted open Kev) works with `JEV_BACKEND=kev` and `KEV_URL`.
+One OpenRouter key powers everything: Jev uses `POST /api/alpha/decisions` (model `typesafe/jev-1.13`), Claude and Gemini use chat completions. New OpenRouter accounts are limited to ~20 requests/min per model and cap in-flight spend by credit balance, so the race paces each model one call at a time and retries transient 429/402s. Rows that still end up with failed calls are shown as **incomplete** and excluded from the headline comparison. Adding ~$5 of credit avoids this.
 
 ## Use it from your agent (MCP)
-
-The repo ships an MCP server so Claude Code, Cursor or Codex can triage feeds with Jev:
 
 ```bash
 claude mcp add jev-pulse -- npx tsx packages/mcp/src/index.ts
 ```
 
-Tools: `triage_feed` (rank a HN or GitHub feed by urgency x actionability) and `score_items` (score any text). Start `npm run dev -w @jev-pulse/api` first, or set `JEV_PULSE_URL`.
+Tools: `triage_feed` (rank a repo's open issues, or the dataset, by urgency x actionability) and `score_items`. Run `npm run dev -w @jev-pulse/api` first, or set `JEV_PULSE_URL`.
 
 ## Architecture
 
 ```
-HN / GitHub / synthetic ──> apps/api (Hono) ──> DecisionBackend ──> mock | jev | kev
-                               │  SSE /api/stream   POST /api/score   GET /api/triage   GET /api/compare (model race)
-                               ▼
-                       apps/web (React 19 + Canvas)   packages/mcp (stdio MCP)
-                               ▲
-                       packages/schema (Zod: Decision, ScoredItem)
+data/github-issues.json ─┐
+live GitHub repo scan ───┴─> apps/api (Hono) ──> DecisionBackend ──> jev (OpenRouter decisions) | mock
+                                │  SSE /api/stream   SSE /api/compare   POST /api/score   GET /api/triage
+                                ▼
+                        apps/web (React 19 + Canvas)      packages/mcp (stdio MCP)
+                                ▲
+                        packages/schema (Zod: Decision, ScoredItem)
 ```
 
 Stack: TypeScript, React 19, Vite, Tailwind CSS v4, Hono, Zod, Vitest, Model Context Protocol SDK, GitHub Actions.
 
 ## Scripts
 
-`npm run dev` · `npm test` · `npm run typecheck` · `npm run lint` · `npm run build`
+`npm run dev` · `npm test` · `npm run typecheck` · `npm run lint` · `npm run build` · `npm run dataset`
 
 ## Roadmap
 
-- WebGPU renderer (instanced, compute-driven) with the current Canvas2D path as fallback
+- WebGPU renderer with the current Canvas2D path as fallback
 - Cloudflare Workers deploy for the API
-- Paste / CSV upload mode
+- Larger, multi-run race with confidence intervals
 
 ## Author
 
@@ -78,4 +72,4 @@ Stack: TypeScript, React 19, Vite, Tailwind CSS v4, Hono, Zod, Vitest, Model Con
 
 ## License
 
-MIT
+MIT (code). Issue text in `data/` is public GitHub content from the repositories above.

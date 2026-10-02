@@ -18,9 +18,9 @@ server.registerTool(
   {
     title: "Triage a feed with Jev",
     description:
-      "Scores every item in a Hacker News or GitHub-issues feed with Jev (category, urgency, sentiment, actionable, spam) and returns the top N ranked by urgency x actionability, with confidence and an 'escalate' flag for low-confidence items. Cheap and fast: use it to decide what deserves an LLM's attention.",
+      "Scores GitHub issues with Jev (category bug/feature/question, urgency, sentiment, actionable, spam) and returns the top N ranked by urgency x actionability, with confidence and an 'escalate' flag for low-confidence items. Sources: the bundled maintainer-labeled dataset, or any public repo's open issues. Cheap and fast: use it to decide what deserves an LLM's attention.",
     inputSchema: {
-      source: z.enum(["hn", "github"]).default("hn"),
+      source: z.enum(["dataset", "github"]).default("github"),
       repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/).optional().describe("owner/name, required when source=github"),
       limit: z.number().int().min(1).max(500).default(60).describe("how many items to score"),
       top: z.number().int().min(1).max(50).default(10).describe("how many ranked results to return"),

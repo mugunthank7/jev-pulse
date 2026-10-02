@@ -107,6 +107,9 @@ export function Radar({ items, running, onHover }: Props) {
         ctx.fillText(String(a.count), lx, ly + 14);
       }
 
+      ctx.textAlign = "left"; ctx.font = "10px ui-monospace, monospace"; ctx.fillStyle = "rgba(255,255,255,0.35)";
+      ctx.fillText("◯ red ring = disagrees with the maintainer's label", 16, s.h - 14);
+
       // particles
       ctx.globalCompositeOperation = "lighter";
       let best: Particle | null = null, bestD = 14 * 14;
@@ -127,6 +130,12 @@ export function Radar({ items, running, onHover }: Props) {
         grad.addColorStop(0.35, `hsla(${p.hue},${sat}%,55%,${0.16 * pulseA})`);
         grad.addColorStop(1, `hsla(${p.hue},${sat}%,50%,0)`);
         ctx.fillStyle = grad; ctx.beginPath(); ctx.arc(p.x, p.y, glow, 0, Math.PI * 2); ctx.fill();
+        if (p.item.correct === false && age >= 1) {
+          ctx.globalCompositeOperation = "source-over";
+          ctx.strokeStyle = "rgba(255,80,90,0.85)"; ctx.lineWidth = 1.2;
+          ctx.beginPath(); ctx.arc(p.x, p.y, p.r + 3.5, 0, Math.PI * 2); ctx.stroke();
+          ctx.globalCompositeOperation = "lighter";
+        }
         const dx = p.x - mouse.current.x, dy = p.y - mouse.current.y, d = dx * dx + dy * dy;
         if (d < bestD) { best = p; bestD = d; }
       }

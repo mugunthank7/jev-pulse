@@ -3,58 +3,61 @@ import type { DecisionBackend } from "./types.ts";
 
 const clamp = (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x));
 
+/** Label definitions shared with the LLM prompt in compare/openrouter.ts so every model sees the same task. */
+export const CLASS_DEFINITIONS = {
+  bug: "Reports something that is broken, crashes, or behaves incorrectly",
+  feature: "Requests new functionality or an improvement to existing behavior",
+  question: "Asks how to do something, or asks for help or clarification",
+} as const satisfies Record<(typeof CATEGORIES)[number], string>;
+
 /** The five typed questions Jev Pulse asks about every item. */
 export const QUESTIONS = {
-  category: { type: "choice", options: [...CATEGORIES] },
-  urgency: { type: "score", min: 0, max: 100 },
-  sentiment: { type: "score", min: -1, max: 1 },
-  actionable: { type: "noul" },
-  spam: { type: "noul" },
+  category: { type: "choice", instructions: "What is the reporter of this GitHub issue asking for?", criteria: CLASS_DEFINITIONS },
+  urgency: { type: "score", instructions: "How urgent is this issue for the maintainers?", criteria: ["Not urgent", "Low", "Medium", "High", "Critical"] },
+  sentiment: { type: "score", instructions: "What is the reporter's tone?", criteria: ["Very negative", "Negative", "Neutral", "Positive", "Very positive"] },
+  actionable: { type: "noul", instructions: "Does the issue contain enough detail for a maintainer to act on it?", criteria: { true: "Clear and actionable", false: "Vague or missing information" } },
+  spam: { type: "noul", instructions: "Is this issue spam or off-topic?", criteria: { true: "Spam or off-topic", false: "A genuine issue" } },
 } as const;
 
-type Raw = Record<string, any>;
+type Answer = { choice?: string; probabilities?: Record<string, number>; confidence?: number; score?: number; noul?: number };
 
 /**
- * Normalises Jev's response into our Decision shape. Written defensively
- * (several field spellings accepted) because the API is in early access and the
- * exact response envelope has not been verified against a live key yet.
+ * Maps OpenRouter's /api/alpha/decisions `answers` into our Decision.
+ * Shape verified against a live typesafe/jev-1.13 response (choice: choice+probabilities+confidence;
+ * score: probability-weighted position 0..N-1 + confidence; noul: probability of "true").
  */
-export function normalise(raw: Raw): Decision {
-  const a = raw.answers ?? raw.results ?? raw;
-  const probOf = (q: Raw): number => (typeof q === "number" ? q : (q?.probability ?? q?.p ?? q?.value ?? 0.5));
-  const conf = (q: Raw): number => clamp(q?.confidence ?? q?.probability_of_value ?? 0.6, 0, 1);
-
-  const c = a.category ?? {};
-  const probs: Record<string, number> = c.probabilities ?? c.probs ?? {};
-  const label = (c.value ?? c.choice ?? Object.entries(probs).sort((x, y) => y[1] - x[1])[0]?.[0] ?? "discussion") as never;
-
+export function normalise(answers: Record<string, Answer>): Decision {
+  const cat = answers.category ?? {};
+  const probs = cat.probabilities ?? {};
+  const label = (cat.choice ?? Object.entries(probs).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "question") as (typeof CATEGORIES)[number];
+  const scaled = (a: Answer | undefined, lo: number, hi: number) => lo + (clamp(a?.score ?? 0, 0, 4) / 4) * (hi - lo);
   return DecisionSchema.parse({
-    category: { label, probs, confidence: clamp(probs[label as string] ?? conf(c), 0, 1) },
-    urgency: { value: clamp(a.urgency?.value ?? 0, 0, 100), confidence: conf(a.urgency) },
-    sentiment: { value: clamp(a.sentiment?.value ?? 0, -1, 1), confidence: conf(a.sentiment) },
-    actionable: { p: clamp(probOf(a.actionable), 0, 1) },
-    spam: { p: clamp(probOf(a.spam), 0, 1) },
+    category: { label, probs, confidence: clamp(probs[label] ?? cat.confidence ?? 0.5, 0, 1) },
+    urgency: { value: scaled(answers.urgency, 0, 100), confidence: clamp(answers.urgency?.confidence ?? 0.5, 0, 1) },
+    sentiment: { value: scaled(answers.sentiment, -1, 1), confidence: clamp(answers.sentiment?.confidence ?? 0.5, 0, 1) },
+    actionable: { p: clamp(answers.actionable?.noul ?? 0.5, 0, 1) },
+    spam: { p: clamp(answers.spam?.noul ?? 0, 0, 1) },
   });
 }
 
-/** Real Jev (or any Jev-compatible endpoint such as a self-hosted Kev). */
+/** Real Jev through OpenRouter's decisions endpoint (model typesafe/jev-1.13). */
 export class JevBackend implements DecisionBackend {
+  readonly name = "jev";
   constructor(
-    readonly name: string,
-    private url: string,
-    private apiKey?: string,
-    private model = "jev-latest",
+    private apiKey: string,
+    private url = "https://openrouter.ai/api/alpha/decisions",
+    private model = "typesafe/jev-1.13",
   ) {}
 
   async decide(item: Item) {
     const started = performance.now();
     const res = await fetch(this.url, {
       method: "POST",
-      headers: { "content-type": "application/json", ...(this.apiKey ? { authorization: `Bearer ${this.apiKey}` } : {}) },
-      body: JSON.stringify({ model: this.model, state: item.text, questions: QUESTIONS }),
+      headers: { "content-type": "application/json", authorization: `Bearer ${this.apiKey}` },
+      body: JSON.stringify({ model: this.model, state: { issue: item.text }, questions: QUESTIONS }),
     });
-    if (!res.ok) throw new Error(`${this.name} ${res.status}: ${(await res.text()).slice(0, 200)}`);
-    const decision = normalise((await res.json()) as Raw);
-    return { decision, latencyMs: performance.now() - started };
+    if (!res.ok) throw new Error(`jev ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    const body = (await res.json()) as { answers: Record<string, Answer>; usage?: { cost?: number } };
+    return { decision: normalise(body.answers), latencyMs: performance.now() - started, costUsd: body.usage?.cost };
   }
 }

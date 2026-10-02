@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-/** The categories Jev Pulse asks Jev to choose between. */
-export const CATEGORIES = ["bug", "feature", "question", "security", "discussion", "news"] as const;
+/** The classes Jev Pulse asks every model to choose between (= the dataset's ground-truth labels). */
+export const CATEGORIES = ["bug", "feature", "question"] as const;
 export type Category = (typeof CATEGORIES)[number];
 
 /** A raw item pulled from a source (HN, GitHub, pasted text...). */
@@ -10,6 +10,8 @@ export const ItemSchema = z.object({
   text: z.string().min(1).max(4000),
   url: z.string().optional(),
   source: z.string(),
+  /** Ground-truth class (maintainer-applied GitHub label) when the item comes from the labeled dataset. */
+  label: z.enum(CATEGORIES).optional(),
 });
 export type Item = z.infer<typeof ItemSchema>;
 
@@ -33,6 +35,8 @@ export const ScoredItemSchema = ItemSchema.extend({
   latencyMs: z.number(),
   costUsd: z.number(),
   backend: z.string(),
+  /** Whether the predicted category matches the ground-truth label (undefined when unlabeled). */
+  correct: z.boolean().optional(),
 });
 export type ScoredItem = z.infer<typeof ScoredItemSchema>;
 

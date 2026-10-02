@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export type RaceRow = {
-  id: string; label: string; family: "jev" | "claude" | "gemini";
-  mode: "measured" | "modeled" | "simulated"; done: number; total: number;
-  avgLatencyMs: number; costUsd: number; costPer1k: number; inTokens: number; outTokens: number;
-  errors: number; lastError?: string; finished: boolean;
+  id: string; label: string; family: "jev" | "claude" | "gemini" | "other";
+  done: number; total: number; avgLatencyMs: number; costUsd: number; costPer1k: number;
+  correct: number; scored: number; accuracy: number;
+  inTokens: number; outTokens: number; errors: number; lastError?: string; finished: boolean;
 };
 
 export function useRace() {

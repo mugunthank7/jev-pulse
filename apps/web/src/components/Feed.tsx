@@ -16,7 +16,7 @@ export function Feed({ items, hovered }: { items: ScoredItem[]; hovered: ScoredI
                   <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full" style={{ background: `hsl(${CATEGORY_HUE[i.decision.category.label]} 90% 62%)`, boxShadow: `0 0 ${4 + c * 10}px hsl(${CATEGORY_HUE[i.decision.category.label]} 90% 60%)` }} />
                   <div className="min-w-0">
                     <div className="truncate text-[13px] text-white/85">{i.text}</div>
-                    <div className="font-mono text-[10px] text-white/40">{i.decision.category.label} · urg {Math.round(i.decision.urgency.value)} · {Math.round(c * 100)}%{c < ESCALATE_BELOW ? " · ⚠ escalate" : ""}</div>
+                    <div className="font-mono text-[10px] text-white/40">{i.decision.category.label}{i.correct === undefined ? "" : i.correct ? " ✓" : ` ✗ (label: ${i.label})`} · urg {Math.round(i.decision.urgency.value)} · {Math.round(c * 100)}%{c < ESCALATE_BELOW ? " · ⚠ escalate" : ""}</div>
                   </div>
                 </li>
               );
@@ -44,7 +44,8 @@ function Detail({ item }: { item: ScoredItem }) {
   return (
     <div className="scroll overflow-y-auto p-4">
       <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/40">{item.source}</div>
-      <p className="mt-1 mb-3 text-sm leading-snug">{item.text.slice(0, 220)}</p>
+      <p className="mt-1 mb-2 text-sm leading-snug">{item.text.slice(0, 220)}</p>
+      {item.label && <div className="mb-3 font-mono text-[11px]">maintainer label: <b>{item.label}</b> <span className={item.correct ? "text-emerald-300" : "text-rose-300"}>{item.correct ? "✓ Jev agreed" : "✗ Jev said " + d.category.label}</span></div>}
       {probs.map(([k, p]) => <Bar key={k} label={k} value={p} text={`${(p * 100).toFixed(0)}%`} color={`hsl(${CATEGORY_HUE[k]} 85% 60%)`} />)}
       <div className="my-3 border-t border-white/10" />
       <Bar label="urgency" value={d.urgency.value / 100} text={`${Math.round(d.urgency.value)} / 100`} color={`hsl(${hue} 85% 60%)`} />

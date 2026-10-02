@@ -9,9 +9,10 @@ import { useRace } from "./lib/race";
 import { useJevStream, type StreamParams } from "./lib/stream";
 
 const PRESETS: { label: string; params: StreamParams }[] = [
-  { label: "Hacker News", params: { source: "hn", limit: 120 } },
-  { label: "facebook/react issues", params: { source: "github", repo: "facebook/react", limit: 200 } },
-  { label: "Burst · 1,000 items", params: { source: "synthetic", limit: 1000 } },
+  { label: "Labeled issues · 120", params: { source: "dataset", limit: 120 } },
+  { label: "pandas", params: { source: "dataset", repo: "pandas-dev/pandas", limit: 60 } },
+  { label: "scikit-learn", params: { source: "dataset", repo: "scikit-learn/scikit-learn", limit: 60 } },
+  { label: "VS Code", params: { source: "dataset", repo: "microsoft/vscode", limit: 60 } },
 ];
 
 export default function App() {
@@ -32,7 +33,7 @@ export default function App() {
       <header className="pointer-events-none absolute top-0 left-0 z-10 flex w-full flex-col gap-3 p-4 sm:p-6">
         <div className="pointer-events-auto flex flex-wrap items-center gap-x-4 gap-y-2">
           <h1 className="text-xl font-semibold tracking-tight">Jev <span className="bg-gradient-to-r from-cyan-300 to-fuchsia-300 bg-clip-text text-transparent">Pulse</span></h1>
-          <span className="hidden text-xs text-white/40 md:inline">typed, calibrated decisions at stream speed</span>
+          <span className="hidden text-xs text-white/40 md:inline">real labeled GitHub issues, classified by Jev</span>
           <div className="flex rounded-full border border-white/10 bg-white/5 p-0.5 text-xs">
             {(["radar", "race"] as const).map((v) => (
               <button key={v} onClick={() => setView(v)} className={`rounded-full px-3 py-1 capitalize transition ${view === v ? "bg-white/15 text-white" : "text-white/50 hover:text-white"}`}>{v === "race" ? "Model race" : "Radar"}</button>
@@ -42,8 +43,7 @@ export default function App() {
         </div>
         {view === "race" ? (
           <div className="pointer-events-auto flex flex-wrap items-center gap-2">
-            <button onClick={() => race.start("hn", 20)} disabled={race.running} className="rounded-full bg-gradient-to-r from-cyan-400 to-fuchsia-400 px-4 py-1.5 text-xs font-semibold text-black disabled:opacity-50">{race.running ? "Racing…" : "Start race"}</button>
-            <button onClick={() => race.start("synthetic", 30)} disabled={race.running} className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs hover:bg-white/10 disabled:opacity-50">Synthetic · 30 items</button>
+            <button onClick={() => race.start("dataset", 20)} disabled={race.running} className="rounded-full bg-gradient-to-r from-cyan-400 to-fuchsia-400 px-4 py-1.5 text-xs font-semibold text-black disabled:opacity-50">{race.running ? "Racing…" : "Start race"}</button>
           </div>
         ) : (
         <div className="pointer-events-auto flex flex-wrap items-center gap-2">
@@ -51,8 +51,8 @@ export default function App() {
             <button key={p.label} onClick={() => run(i)} className={`rounded-full border px-3 py-1.5 text-xs transition ${active === i && state.startedAt ? "border-white/40 bg-white/15" : "border-white/10 bg-white/5 hover:bg-white/10"}`}>{p.label}</button>
           ))}
           <form className="flex" onSubmit={(e) => { e.preventDefault(); if (repo.trim()) { setActive(-1); start({ source: "github", repo: repo.trim(), limit: 200 }); } }}>
-            <input value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="owner/repo" className="w-32 rounded-l-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs outline-none placeholder:text-white/30 focus:border-white/30" />
-            <button className="rounded-r-full border border-l-0 border-white/10 bg-white/10 px-3 py-1.5 text-xs hover:bg-white/20">Scan</button>
+            <input value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="live: owner/repo" className="w-32 rounded-l-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs outline-none placeholder:text-white/30 focus:border-white/30" />
+            <button className="rounded-r-full border border-l-0 border-white/10 bg-white/10 px-3 py-1.5 text-xs hover:bg-white/20">Scan live</button>
           </form>
           {state.running && <button onClick={stop} className="rounded-full border border-rose-400/30 bg-rose-400/10 px-3 py-1.5 text-xs text-rose-200">Stop</button>}
         </div>
