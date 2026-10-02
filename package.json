@@ -1,0 +1,18 @@
+{
+  "name": "jev-pulse",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "concurrently -n api,web -c cyan,magenta \"npm run dev -w @jev-pulse/api\" \"npm run dev -w web\"",
+    "build": "npm run build -w web",
+    "lint": "npm run lint -w web",
+    "test": "vitest run",
+    "typecheck": "tsc -p apps/api --noEmit && tsc -b apps/web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0",
+    "vitest": "^3.0.0"
+  }
+}

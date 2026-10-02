@@ -1,0 +1,17 @@
+{
+  "name": "@jev-pulse/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/server.ts",
+    "start": "tsx --env-file-if-exists=../../.env src/server.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.0",
+    "@jev-pulse/schema": "*",
+    "hono": "^4.6.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": { "tsx": "^4.19.0", "typescript": "~6.0.2", "@types/node": "^24.0.0" }
+}

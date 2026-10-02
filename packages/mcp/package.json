@@ -1,0 +1,10 @@
+{
+  "name": "@jev-pulse/mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": { "jev-pulse-mcp": "src/index.ts" },
+  "scripts": { "start": "tsx src/index.ts" },
+  "dependencies": { "@modelcontextprotocol/sdk": "^1.0.0", "zod": "^4.0.0" },
+  "devDependencies": { "tsx": "^4.19.0", "@types/node": "^24.0.0" }
+}
