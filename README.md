@@ -1,26 +1,38 @@
-# Jev Pulse
+# Jev Pulse: search reranking with Jev
 
-**Real GitHub issues, classified live by [Jev](https://openrouter.ai/docs/guides/community/jev) and raced against Claude and Gemini, scored against what maintainers actually labeled them.**
+**Can a $0.042-per-million-token decision model replace an LLM in a real application?** Jev Pulse tests it on **search reranking**, where a ranking stage must judge dozens of query/product pairs per search, fast and cheaply.
 
-Jev is TypeSafe AI's "System One" decision model: it doesn't write text, it answers typed questions (`choice`, `score`, yes/no) with calibrated probabilities in one pass. Jev Pulse streams a labeled dataset through it and draws every decision on a live radar: items enter from the feed, pass the Jev core, and land in their cluster. A red ring means Jev disagreed with the maintainer's label.
+The demo takes a real shopping query and the real Amazon products that were judged for it, orders them with a keyword baseline, then reranks them with **Jev**, **Gemini** and **Claude** side by side. Product cards slide into their new positions. Green means a human judged the product an exact match. Live meters show nDCG@10, latency and billed cost.
 
-> Add a hero GIF here: `docs/hero.gif` (record the Radar run, then the Model race).
+> Add a hero GIF here: `docs/hero.gif` (record the **Search rerank** tab).
 
-## The data (not synthetic)
+## Why reranking
 
-`data/github-issues.json` holds **318 real issues** from `pandas-dev/pandas`, `numpy/numpy`, `scikit-learn/scikit-learn` and `microsoft/vscode`. Ground truth is the label a maintainer applied: `bug`, `feature` (enhancement / feature-request) or `question`. Only issues carrying exactly one of the three classes are kept; PRs are dropped. Rebuild with `npm run dataset` (set `GITHUB_TOKEN` for higher rate limits).
+Rerankers score each candidate against the query. That is a bounded decision (exact / substitute / complement / irrelevant), not text generation, so Jev's design fits: typed answers with calibrated probabilities, no prose. Everything is scored in parallel, so latency is that of one call. LLM rerankers are accurate but usually too slow and costly for live traffic.
 
-Maintainer labels are noisy (for example, a `BUG:` titled issue filed as a question), so no model reaches 100%. Read accuracy as relative.
+Where Jev is **not** the right tool: it writes no explanations, is weaker on non-English text and counting, and in independent tests it was level with mid-price LLMs and behind frontier ones. A model trained on your own labels beat it wherever one was tried. Don't use it for security decisions (one independent phishing test had it at 63% vs 81% for Claude Haiku 4.5).
+
+## The data (real, human-judged)
+
+`data/esci-search.json`: **40 queries, 653 products** from the Amazon Shopping Queries Dataset (ESCI), US locale. Every product carries a human label: Exact, Substitute, Complement or Irrelevant. Candidates are represented by title + brand. nDCG@10 uses the ESCI gains (exact 1, substitute 0.1, complement 0.01, irrelevant 0).
+
+Caveats: Irrelevant products are rare (51 of 653) and Substitutes common, which makes ranking harder and baselines high. The baseline is plain BM25 over each query's own candidate pool, not a production hybrid search, so lifts here are not comparable to published ones against stronger baselines.
+
+Rebuild or resize: `pip install pyarrow fsspec aiohttp && TARGET_QUERIES=80 npm run dataset:search`.
 
 ## What I measured
 
-Real `typesafe/jev-1.13` calls through OpenRouter on this dataset (cost is the billed amount OpenRouter returns):
+Real `typesafe/jev-1.13` calls through OpenRouter, one decision per query/product pair, all 40 queries:
 
-| Run | Accuracy vs labels | Avg latency / issue | Billed cost |
-|---|---|---|---|
-| 120 issues, 5 typed questions each | 78% (94/120) | ~380 ms | $0.0037 (about $0.031 per 1,000 issues) |
+| Metric | Keyword baseline (BM25) | Jev |
+|---|---|---|
+| nDCG@10 | 0.660 | **0.772** (+0.112, standard error ~0.037) |
+| Exact matches in top 5 | 0.525 | 0.590 |
+| Per-query result | | better on 27, worse on 13 |
+| Latency per search | | 305 ms mean, 277 ms median |
+| Cost per search | | $0.00032 (about $0.32 per 1,000 searches) |
 
-Claude and Gemini comparisons run in the **Live arena** tab: the same issue flies into three lanes (Jev, Gemini, Claude) at once, each with its own live timer, billed cost and accuracy. My early runs were on a credit-less account where several rows were incomplete and samples were small, so I'm not publishing Claude or Gemini numbers yet. Run the race on a funded account with 100+ issues before quoting numbers.
+**Not measured yet: Claude and Gemini.** They run as one listwise ranking call per search (how LLM reranking is normally deployed) through the same OpenRouter key, but my test account has no credits, so those lanes return a credit error. Add ~$5 at openrouter.ai/settings/credits and the Search rerank tab fills them in. Until then no LLM comparison is claimed. 40 queries is a small sample: re-run with more before quoting numbers.
 
 ## Quick start
 
@@ -30,9 +42,7 @@ cp .env.example .env     # add OPENROUTER_API_KEY
 npm run dev              # API :8787, web :5173
 ```
 
-Open http://localhost:5173. Without a key the API falls back to an **offline mock** (keyword heuristics, clearly labeled in the UI) so the app and tests still run. It is not Jev.
-
-One OpenRouter key powers everything: Jev uses `POST /api/alpha/decisions` (model `typesafe/jev-1.13`), Claude and Gemini use chat completions. New OpenRouter accounts are limited to ~20 requests/min per model and cap in-flight spend by credit balance, so the race paces each model one call at a time and retries transient 429/402s. Rows that still end up with failed calls are shown as **incomplete** and excluded from the headline comparison. Adding ~$5 of credit avoids this.
+Open http://localhost:5173 and press **Rerank this search** (or **Run 10 searches** for running totals).
 
 ## Use it from your agent (MCP)
 
@@ -40,31 +50,27 @@ One OpenRouter key powers everything: Jev uses `POST /api/alpha/decisions` (mode
 claude mcp add jev-pulse -- npx tsx packages/mcp/src/index.ts
 ```
 
-Tools: `triage_feed` (rank a repo's open issues, or the dataset, by urgency x actionability) and `score_items`. Run `npm run dev -w @jev-pulse/api` first, or set `JEV_PULSE_URL`.
+The `rerank` tool takes a query and up to 100 documents and returns them ordered by Jev's expected relevance, with probabilities. Use it to cut retrieved candidates before spending an LLM on the survivors. Run `npm run dev -w @jev-pulse/api` first, or set `JEV_PULSE_URL`.
+
+## Also in this repo
+
+The first version classified real GitHub issues (bug / feature / question) against maintainer labels: the **Issue arena** and **Issue radar** tabs, with Jev at 78% on 120 issues. Classification is the use case where Jev is weakest relative to LLMs, which is why the project moved to reranking.
 
 ## Architecture
 
 ```
-data/github-issues.json ─┐
-live GitHub repo scan ───┴─> apps/api (Hono) ──> DecisionBackend ──> jev (OpenRouter decisions) | mock
-                                │  SSE /api/stream   SSE /api/compare   POST /api/score   GET /api/triage
-                                ▼
-                        apps/web (React 19 + Canvas)      packages/mcp (stdio MCP)
-                                ▲
-                        packages/schema (Zod: Decision, ScoredItem)
+data/esci-search.json ──> apps/api (Hono) ──SSE /api/rerank──> apps/web (React 19 + Motion)
+                              │  Jev: POST openrouter.ai/api/alpha/decisions (typesafe/jev-1.13), one call per pair
+                              │  Gemini / Claude: one listwise chat completion each
+                              └── POST /api/rank ──> packages/mcp (stdio MCP: rerank, triage_feed, score_items)
+packages/schema: shared Zod types
 ```
 
-Stack: TypeScript, React 19, Vite, Tailwind CSS v4, Hono, Zod, Vitest, Model Context Protocol SDK, GitHub Actions.
+Stack: TypeScript, React 19, Vite, Tailwind CSS v4, Motion, Hono, Zod, Vitest, Model Context Protocol SDK, GitHub Actions.
 
 ## Scripts
 
-`npm run dev` · `npm test` · `npm run typecheck` · `npm run lint` · `npm run build` · `npm run dataset`
-
-## Roadmap
-
-- WebGPU renderer with the current Canvas2D path as fallback
-- Cloudflare Workers deploy for the API
-- Larger, multi-run race with confidence intervals
+`npm run dev` · `npm test` · `npm run typecheck` · `npm run lint` · `npm run build` · `npm run dataset:search`
 
 ## Author
 
@@ -72,4 +78,4 @@ Stack: TypeScript, React 19, Vite, Tailwind CSS v4, Hono, Zod, Vitest, Model Con
 
 ## License
 
-MIT (code). Issue text in `data/` is public GitHub content from the repositories above.
+MIT (code). Product data in `data/` comes from the Amazon Shopping Queries Dataset (Apache-2.0).

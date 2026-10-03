@@ -100,3 +100,55 @@ describe("arena", () => {
     expect(events.at(-1)!.type).toBe("done");
   }, 30_000);
 });
+
+describe("rerank", () => {
+  it("bm25 + ndcg: a perfect ordering scores 1, a reversed one scores lower", async () => {
+    const { ndcg } = await import("./rerank/metrics.ts");
+    const cs = [
+      { id: "a", title: "a", brand: "", bullets: "", label: "Irrelevant" as const },
+      { id: "b", title: "b", brand: "", bullets: "", label: "Exact" as const },
+      { id: "c", title: "c", brand: "", bullets: "", label: "Substitute" as const },
+    ];
+    expect(ndcg(cs, [1, 2, 0])).toBeCloseTo(1);
+    expect(ndcg(cs, [0, 2, 1])).toBeLessThan(1);
+  });
+
+  it("expected utility ranks exact > substitute > irrelevant", async () => {
+    const { expectedUtility } = await import("./rerank/jev.ts");
+    const u = (p: Record<string, number>) => expectedUtility(p).utility;
+    expect(u({ exact: 0.9, substitute: 0.1 })).toBeGreaterThan(u({ exact: 0.1, substitute: 0.8, irrelevant: 0.1 }));
+    expect(u({ substitute: 0.5, irrelevant: 0.5 })).toBeGreaterThan(u({ irrelevant: 1 }));
+  });
+
+  it("parses LLM rankings, tolerating prose, duplicates and omissions", async () => {
+    const { parseRanking } = await import("./rerank/llm.ts");
+    expect(parseRanking('Here: {"ranking":[3,1,1,9,2]}', 3)).toEqual([2, 0, 1]);
+    expect(parseRanking('{"ranking":[2]}', 3)).toEqual([1]);
+    expect(() => parseRanking("nope", 3)).toThrow();
+  });
+
+  it("runs three lanes on the same candidates and reports metrics per lane", async () => {
+    const { runRerank } = await import("./rerank/run.ts");
+    const sq = {
+      queryId: 1, query: "red mug",
+      candidates: [
+        { id: "1", title: "blue plate", brand: "", bullets: "", label: "Irrelevant" as const },
+        { id: "2", title: "red mug large", brand: "", bullets: "", label: "Exact" as const },
+        { id: "3", title: "red cup", brand: "", bullets: "", label: "Substitute" as const },
+      ],
+    };
+    const events: { type: string; lane?: string; ndcg10?: number }[] = [];
+    await runRerank(sq, [{ id: "jev", label: "J", model: "j" }, { id: "gemini", label: "G", model: "g" }, { id: "claude", label: "C", model: "c" }], (e) => void events.push(e), {
+      key: "k",
+      deps: {
+        jevScoreAll: async (_q, cs, _k, onProgress) => cs.map((c, i) => { onProgress(i + 1, cs.length); return { utility: c.label === "Exact" ? 1 : c.label === "Substitute" ? 0.1 : 0, probs: { Exact: 0, Substitute: 0, Complement: 0, Irrelevant: 1 }, costUsd: 0.00001, latencyMs: 5 }; }),
+        llmRerank: async (model, _q, cs) => { if (model === "c") throw new Error("c 400: boom"); return { order: cs.map((_, i) => i), costUsd: 0.002, latencyMs: 9, inTokens: 1, outTokens: 1, missing: 0 }; },
+      },
+    });
+    const lane = (id: string) => events.find((e) => e.type === "lane" && e.lane === id);
+    expect(lane("jev")!.ndcg10).toBeCloseTo(1);
+    expect(lane("gemini")).toBeDefined();
+    expect(events.find((e) => e.type === "lane_error" && e.lane === "claude")).toBeDefined();
+    expect(events.at(-1)!.type).toBe("done");
+  });
+});

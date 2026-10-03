@@ -13,7 +13,8 @@
     "lint": "npm run lint -w web",
     "test": "vitest run",
     "typecheck": "tsc -p apps/api --noEmit && tsc -b apps/web",
-    "dataset": "tsx scripts/build-dataset.ts"
+    "dataset": "tsx scripts/build-dataset.ts",
+    "dataset:search": "python3 scripts/build_search_dataset.py"
   },
   "devDependencies": {
     "concurrently": "^9.0.0",

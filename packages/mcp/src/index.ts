@@ -14,6 +14,22 @@ async function call(path: string, init?: RequestInit) {
 const server = new McpServer({ name: "jev-pulse", version: "0.1.0" });
 
 server.registerTool(
+  "rerank",
+  {
+    title: "Rerank documents for a query with Jev",
+    description:
+      "Reorders candidate documents (search results, RAG chunks, products) by relevance to a query using Jev: one typed decision per document, scored in parallel, ranked by expected relevance (exact > substitute > complement > irrelevant). Fast and very cheap, so use it to cut 50-100 retrieved candidates down before spending an LLM on the survivors. It returns no explanations.",
+    inputSchema: {
+      query: z.string().min(1).max(300),
+      documents: z.array(z.object({ id: z.string().optional(), text: z.string().max(400) })).min(1).max(100),
+    },
+  },
+  async ({ query, documents }) => ({
+    content: [{ type: "text", text: await call("/api/rank", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ query, documents }) }) }],
+  }),
+);
+
+server.registerTool(
   "triage_feed",
   {
     title: "Triage a feed with Jev",

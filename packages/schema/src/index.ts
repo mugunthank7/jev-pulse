@@ -63,3 +63,24 @@ export function estimateTokens(text: string): number {
 export function jevCost(text: string): number {
   return (estimateTokens(text) * JEV_USD_PER_M_TOKENS) / 1_000_000;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Search reranking (Amazon ESCI): every candidate carries a HUMAN relevance judgment.
+// ---------------------------------------------------------------------------------------------
+export const ESCI_LABELS = ["Exact", "Substitute", "Complement", "Irrelevant"] as const;
+export type EsciLabel = (typeof ESCI_LABELS)[number];
+
+/** Gain per ESCI label, as in the ESCI paper: only an exact match is fully relevant. */
+export const ESCI_GAINS: Record<EsciLabel, number> = { Exact: 1, Substitute: 0.1, Complement: 0.01, Irrelevant: 0 };
+
+export const CandidateSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  brand: z.string().default(""),
+  bullets: z.string().default(""),
+  label: z.enum(ESCI_LABELS),
+});
+export type Candidate = z.infer<typeof CandidateSchema>;
+
+export const SearchQuerySchema = z.object({ queryId: z.number(), query: z.string(), candidates: z.array(CandidateSchema) });
+export type SearchQuery = z.infer<typeof SearchQuerySchema>;

@@ -6,6 +6,10 @@ import { createBackend, type DecisionBackend } from "./backends/index.ts";
 import { runArena, type ArenaLane } from "./compare/arena.ts";
 import { LANE_OPTIONS, resolveModel } from "./compare/models.ts";
 import { datasetRepos, loadSource } from "./sources/index.ts";
+import { getQuery, listQueries, searchSource } from "./rerank/data.ts";
+import { runRerank, type LaneMeta } from "./rerank/run.ts";
+import { orderByScore } from "./rerank/bm25.ts";
+import { jevScoreAll } from "./rerank/jev.ts";
 
 /** Scores items with bounded concurrency; calls onScored as each finishes. */
 export async function scoreAll(
@@ -61,6 +65,43 @@ export function createApp(backend: DecisionBackend = createBackend()) {
     const out: ScoredItem[] = [];
     await scoreAll(backend, parsed.data.items, (s) => void out.push(s));
     return c.json({ backend: backend.name, items: out });
+  });
+
+  /** Rerank arbitrary documents for a query with Jev (one decision per pair, in parallel). Used by the MCP tool. */
+  app.post("/api/rank", async (c) => {
+    const body = await c.req.json().catch(() => null) as { query?: string; documents?: { id?: string; text?: string }[] } | null;
+    const key = process.env.OPENROUTER_API_KEY;
+    if (!key) return c.json({ error: "OPENROUTER_API_KEY not set" }, 503);
+    if (!body?.query || !Array.isArray(body.documents) || body.documents.length < 1 || body.documents.length > 100) return c.json({ error: "need query and 1-100 documents" }, 400);
+    const docs = body.documents.map((d, i) => ({ id: d.id ?? String(i), title: String(d.text ?? "").slice(0, 400), brand: "", bullets: "", label: "Irrelevant" as const }));
+    const started = performance.now();
+    const results = await jevScoreAll(body.query, docs, key, () => {});
+    const order = orderByScore(results.map((r) => r.utility));
+    return c.json({
+      latencyMs: Math.round(performance.now() - started), costUsd: results.reduce((a, r) => a + r.costUsd, 0),
+      ranking: order.map((i, rank) => ({ rank: rank + 1, id: docs[i]!.id, text: docs[i]!.title, relevance: +results[i]!.utility.toFixed(3), probabilities: results[i]!.probs })),
+    });
+  });
+
+  /** Search reranking: the human-judged ESCI queries available to run. */
+  app.get("/api/rerank/queries", (c) => c.json({ source: searchSource(), queries: listQueries() }));
+
+  /** One query, three rerankers (Jev / Gemini / Claude) started together; events stream as each lane finishes. */
+  app.get("/api/rerank", (c) => {
+    const sq = getQuery(Number(c.req.query("queryId")));
+    const gemini = resolveModel("gemini", c.req.query("gemini")), claude = resolveModel("claude", c.req.query("claude"));
+    if (!sq) return c.json({ error: "unknown queryId" }, 404);
+    if (!gemini || !claude) return c.json({ error: "unknown model" }, 400);
+    const lanes: LaneMeta[] = [
+      { id: "jev", label: "Jev 1.13", model: "typesafe/jev-1.13" },
+      { id: "gemini", label: gemini.label, model: gemini.model },
+      { id: "claude", label: claude.label, model: claude.model },
+    ];
+    return streamSSE(c, async (stream) => {
+      const ac = new AbortController();
+      stream.onAbort(() => ac.abort());
+      await runRerank(sq, lanes, (e) => stream.writeSSE({ event: e.type, data: JSON.stringify(e) }), { key: process.env.OPENROUTER_API_KEY, signal: ac.signal });
+    });
   });
 
   /** Which models each lane can use (single source of truth for the UI's pickers). */
