@@ -12,4 +12,5 @@ function load() {
 
 export const searchSource = () => load().source;
 export const listQueries = () => load().queries.map((q) => ({ queryId: q.queryId, query: q.query, candidates: q.candidates.length, exact: q.candidates.filter((c) => c.label === "Exact").length }));
+export const getQueries = (): SearchQuery[] => load().queries;
 export const getQuery = (id: number): SearchQuery | undefined => load().queries.find((q) => q.queryId === id);

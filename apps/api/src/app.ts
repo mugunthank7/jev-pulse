@@ -9,6 +9,9 @@ import { datasetRepos, loadSource } from "./sources/index.ts";
 import { getQuery, listQueries, searchSource } from "./rerank/data.ts";
 import { runRerank, type LaneMeta } from "./rerank/run.ts";
 import { orderByScore } from "./rerank/bm25.ts";
+import { sortItems } from "./sort/items.ts";
+import { jevJudge, llmJudge } from "./sort/judges.ts";
+import { runSort, type SortLane } from "./sort/run.ts";
 import { jevScoreAll } from "./rerank/jev.ts";
 
 /** Scores items with bounded concurrency; calls onScored as each finishes. */
@@ -101,6 +104,28 @@ export function createApp(backend: DecisionBackend = createBackend()) {
       const ac = new AbortController();
       stream.onAbort(() => ac.abort());
       await runRerank(sq, lanes, (e) => stream.writeSSE({ event: e.type, data: JSON.stringify(e) }), { key: process.env.OPENROUTER_API_KEY, signal: ac.signal });
+    });
+  });
+
+  /** Mind-map race: real (query, product) envelopes sorted by Jev, Gemini and Claude into exact / substitute / not-a-match. */
+  app.get("/api/sort", (c) => {
+    const gemini = resolveModel("gemini", c.req.query("gemini")), claude = resolveModel("claude", c.req.query("claude"));
+    if (!gemini || !claude) return c.json({ error: "unknown model" }, 400);
+    const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 12) || 12, 3), 60);
+    const lanes: SortLane[] = [
+      { id: "jev", label: "Jev", model: "typesafe/jev-1.13" },
+      { id: "gemini", label: gemini.label, model: gemini.model },
+      { id: "claude", label: claude.label, model: claude.model },
+    ];
+    const key = process.env.OPENROUTER_API_KEY;
+    const judge = async (lane: SortLane, item: Parameters<typeof jevJudge>[0]) => {
+      if (!key) throw new Error("OPENROUTER_API_KEY not set");
+      return lane.id === "jev" ? jevJudge(item, key) : llmJudge(lane.model, item, key);
+    };
+    return streamSSE(c, async (stream) => {
+      const ac = new AbortController();
+      stream.onAbort(() => ac.abort());
+      await runSort(sortItems(limit), lanes, judge, (e) => stream.writeSSE({ event: e.type, data: JSON.stringify(e) }), { gapMs: Number(process.env.RACE_MIN_INTERVAL_MS ?? 3200), signal: ac.signal });
     });
   });
 

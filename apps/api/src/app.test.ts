@@ -152,3 +152,38 @@ describe("rerank", () => {
     expect(events.at(-1)!.type).toBe("done");
   });
 });
+
+describe("mind-map sort", () => {
+  it("builds class-balanced real pairs with human labels, reproducibly", async () => {
+    const { sortItems } = await import("./sort/items.ts");
+    const a = sortItems(30), b = sortItems(30);
+    expect(a).toEqual(b);
+    for (const k of ["exact", "substitute", "not_a_match"]) expect(a.filter((i) => i.label === k)).toHaveLength(10);
+    expect(a.every((i) => i.query && i.title)).toBe(true);
+  });
+
+  it("parses LLM category output, tolerating prose and spacing", async () => {
+    const { parseCategory } = await import("./sort/judges.ts");
+    expect(parseCategory('Sure {"category": "Not a match"}')).toBe("not_a_match");
+    expect(parseCategory('{"category":"EXACT"}')).toBe("exact");
+    expect(() => parseCategory('{"category":"weird"}')).toThrow();
+  });
+
+  it("dispatches one envelope per round to every engine and reports correctness", async () => {
+    const { runSort } = await import("./sort/run.ts");
+    const items = [{ id: "1", query: "q", title: "t", brand: "", label: "exact" as const }, { id: "2", query: "q", title: "t2", brand: "", label: "substitute" as const }];
+    const lanes = [{ id: "jev" as const, label: "J", model: "j" }, { id: "claude" as const, label: "C", model: "c" }];
+    const events: { type: string; lane?: string; correct?: boolean; error?: string }[] = [];
+    let cCalls = 0;
+    await runSort(items, lanes, async (lane, item) => {
+      if (lane.id === "claude" && cCalls++ === 0) throw new Error("c 429: slow down");
+      return { predicted: lane.id === "jev" ? item.label : "not_a_match", latencyMs: 5, costUsd: 0.001 };
+    }, (e) => void events.push(e), { gapMs: 0 });
+    const res = events.filter((e) => e.type === "result");
+    expect(events.filter((e) => e.type === "dispatch")).toHaveLength(2);
+    expect(res).toHaveLength(4);
+    expect(res.filter((r) => r.lane === "jev").every((r) => r.correct)).toBe(true);
+    expect(res.filter((r) => r.lane === "claude").every((r) => r.correct === false)).toBe(true);
+    expect(events.some((e) => e.type === "retry")).toBe(true);
+  }, 30_000);
+});

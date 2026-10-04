@@ -14,7 +14,8 @@
     "test": "vitest run",
     "typecheck": "tsc -p apps/api --noEmit && tsc -b apps/web",
     "dataset": "tsx scripts/build-dataset.ts",
-    "dataset:search": "python3 scripts/build_search_dataset.py"
+    "dataset:search": "python3 scripts/build_search_dataset.py",
+    "record": "tsx --env-file-if-exists=.env scripts/record-run.ts"
   },
   "devDependencies": {
     "concurrently": "^9.0.0",

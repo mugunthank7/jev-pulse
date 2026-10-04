@@ -1,10 +1,31 @@
-# Jev Pulse: search reranking with Jev
+# Jev Pulse: can a decision model replace an LLM?
 
-**Can a $0.042-per-million-token decision model replace an LLM in a real application?** Jev Pulse tests it on **search reranking**, where a ranking stage must judge dozens of query/product pairs per search, fast and cheaply.
+**Real search results, sorted live by Jev, Gemini and Claude, scored against human labels, with latency and cost projected to production scale.**
 
-The demo takes a real shopping query and the real Amazon products that were judged for it, orders them with a keyword baseline, then reranks them with **Jev**, **Gemini** and **Claude** side by side. Product cards slide into their new positions. Green means a human judged the product an exact match. Live meters show nDCG@10, latency and billed cost.
+Each "envelope" carries one real shopper query plus one real Amazon product (Amazon Shopping Queries / ESCI, human-labeled). A source node sends a copy of it to three engines at the same instant: **Jev**, **Gemini 3.8 Flash** and **Claude Sonnet 5.5**. Each engine sorts it into a mind-map branch (**exact / substitute / no match**); every landing is checked against the human label (green ring = right, red = wrong). The right-hand panel shows accuracy, latency and cost per engine, and a volume slider that **projects** monthly cost and processing time from the measured per-item numbers.
 
-> Add a hero GIF here: `docs/hero.gif` (record the **Search rerank** tab).
+> Add a hero GIF here: `docs/hero.gif` (see "Make the GIF" below).
+
+## Run it
+
+```bash
+npm install
+cp .env.example .env     # add OPENROUTER_API_KEY (an account with credits)
+npm run dev              # API :8787, web :5173
+```
+
+Open http://localhost:5173 (the **Mind map** tab).
+
+- **Live** mode makes real API calls to all three engines (a 12-item run costs a few cents with the defaults).
+- **Replay** mode plays back a recorded real run with each engine's *recorded* latency, so anyone can watch real measurements without spending credits. Create the recording once with `npm run record`. It refuses to save a tape if any engine failed a call.
+
+## Make the GIF
+
+Open http://localhost:5173/?record=1: no chrome, autoplays the replay in a loop. Capture one pass with any screen recorder (macOS: Shift+Cmd+5, or Kap / CleanShot) and export a GIF.
+
+## How the projections work (and their limits)
+
+The panel does not call the API at 1M items. It takes the measured mean latency and mean billed cost per item from the calls above and scales them linearly: monthly cost = per-item cost x volume; queue time = volume x per-item latency / 50 parallel requests. Always read it as a projection from a few measured calls: it ignores caching, batching, rate limits and volume discounts, and a small sample has wide error bars.
 
 ## Why reranking
 
@@ -34,15 +55,9 @@ Real `typesafe/jev-1.13` calls through OpenRouter, one decision per query/produc
 
 **Not measured yet: Claude and Gemini.** They run as one listwise ranking call per search (how LLM reranking is normally deployed) through the same OpenRouter key, but my test account has no credits, so those lanes return a credit error. Add ~$5 at openrouter.ai/settings/credits and the Search rerank tab fills them in. Until then no LLM comparison is claimed. 40 queries is a small sample: re-run with more before quoting numbers.
 
-## Quick start
+## Search rerank tab
 
-```bash
-npm install
-cp .env.example .env     # add OPENROUTER_API_KEY
-npm run dev              # API :8787, web :5173
-```
-
-Open http://localhost:5173 and press **Rerank this search** (or **Run 10 searches** for running totals).
+The second tab reranks each query's whole candidate list with Jev (one decision per product, in parallel) against a keyword baseline, Gemini and Claude (one listwise call each). Press **Rerank this search** or **Run 10 searches**.
 
 ## Use it from your agent (MCP)
 
@@ -70,7 +85,7 @@ Stack: TypeScript, React 19, Vite, Tailwind CSS v4, Motion, Hono, Zod, Vitest, M
 
 ## Scripts
 
-`npm run dev` · `npm test` · `npm run typecheck` · `npm run lint` · `npm run build` · `npm run dataset:search`
+`npm run dev` · `npm run record` · `npm test` · `npm run typecheck` · `npm run lint` · `npm run build` · `npm run dataset:search`
 
 ## Author
 

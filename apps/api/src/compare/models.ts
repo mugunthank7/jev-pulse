@@ -15,10 +15,10 @@ export const LANE_OPTIONS: Record<Exclude<LaneId, "jev">, { default: string; opt
     ],
   },
   claude: {
-    default: "anthropic/claude-haiku-4.5",
+    default: "anthropic/claude-sonnet-5.5",
     options: [
-      { model: "anthropic/claude-haiku-4.5", label: "Claude Haiku 4.5" },
       { model: "anthropic/claude-sonnet-5.5", label: "Claude Sonnet 5.5" },
+      { model: "anthropic/claude-haiku-4.5", label: "Claude Haiku 4.5" },
       { model: "anthropic/claude-opus-5.5", label: "Claude Opus 5.5" },
     ],
   },
