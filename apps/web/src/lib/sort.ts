@@ -4,8 +4,6 @@ export type Cat = "exact" | "substitute" | "not_a_match";
 export type EngineId = "jev" | "gemini" | "claude";
 export const ENGINE_ORDER: EngineId[] = ["jev", "gemini", "claude"];
 export const CATS: Cat[] = ["exact", "substitute", "not_a_match"];
-export const ENGINE_COLOR: Record<EngineId, string> = { jev: "#34d399", gemini: "#60a5fa", claude: "#fb923c" };
-export const CAT_COLOR: Record<Cat, string> = { exact: "#34d399", substitute: "#fbbf24", not_a_match: "#fb7185" };
 export type EngineMeta = { id: EngineId; label: string; model: string };
 export type PairItem = { id: string; query: string; title: string; brand: string; label: Cat };
 export type Cell = { status: "pending" | "done" | "error"; predicted?: Cat; correct?: boolean; latencyMs?: number; costUsd?: number; error?: string };
@@ -61,7 +59,7 @@ export function project(s: EngineStats, volume: number, concurrency: number) {
   return { costUsd: s.avgCostUsd * volume, queueSeconds: (s.avgLatencyMs / 1000) * volume / concurrency };
 }
 
-export type RunParams = { gemini: string; claude: string; limit: number; speed: number; gapMs: number };
+export type RunParams = { gemini: string; claude: string; limit: number; speed: number };
 
 /**
  * One state machine, two sources. LIVE streams SSE from /api/sort (real API calls, needs keys).
@@ -87,17 +85,15 @@ export function useSortRun() {
     s.onerror = () => { if (s.readyState === EventSource.CLOSED) return; s.close(); setState((st) => (st.done ? st : { ...st, running: false, error: "Connection lost. Is the API running?" })); };
   }, [clear]);
 
-  const startReplay = useCallback(async (p: Pick<RunParams, "speed" | "gapMs" | "limit">, onEnd?: () => void) => {
+  const startReplay = useCallback(async (p: Pick<RunParams, "speed" | "limit">, onEnd?: () => void) => {
     clear(); const id = ++runId.current;
     let tape: Tape;
     try {
-      let res = await fetch("/runs/sort.json", { cache: "no-store" });
+      const json = async (url: string) => { const r = await fetch(url, { cache: "no-store" }); if (!r.ok || !(r.headers.get("content-type") ?? "").includes("json")) throw new Error("missing"); return (await r.json()) as Tape; };
       // A real recording wins. The synthetic dev fixture (gitignored) is only a fallback while building the UI.
-      if (!res.ok || !(res.headers.get("content-type") ?? "").includes("json")) res = await fetch("/runs/sort.dev.json", { cache: "no-store" });
-      if (!res.ok || !(res.headers.get("content-type") ?? "").includes("json")) throw new Error("no recorded run");
-      tape = (await res.json()) as Tape;
+      tape = await json("/runs/sort.json").catch(() => json("/runs/sort.dev.json"));
     } catch {
-      setState({ ...blank(), runId: id, error: "No recorded run found. Run `npm run record` (needs an OpenRouter key with credits), or use Live mode." });
+      setState({ ...blank(), runId: id, error: "No recorded run yet. Run `npm run record` once (needs an OpenRouter key with credits), or switch to Live." });
       return;
     }
     const start = tape.events.find((e): e is Extract<SortEvent, { type: "start" }> => e.type === "start")!;
@@ -106,13 +102,17 @@ export function useSortRun() {
     setState({ ...blank(), runId: id, mode: "replay", running: true, synthetic: !!tape.meta.synthetic, recordedAt: tape.meta.recordedAt });
     const at = (ms: number, fn: () => void) => { timers.current.push(window.setTimeout(fn, ms / p.speed)); };
     at(0, () => setState((st) => reduce(st, { type: "start", lanes: start.lanes, items })));
+    // Each round lasts as long as its SLOWEST engine plus a short pause, and every engine answers after its
+    // RECORDED latency: Jev's envelope is done in a blink while Claude's is still travelling.
+    let t0 = 500;
     items.forEach((item, round) => {
-      const t0 = 400 + round * p.gapMs;
-      at(t0, () => setState((st) => reduce(st, { type: "dispatch", round, itemId: item.id })));
-      for (const r of results.filter((x) => x.round === round)) at(t0 + (r.latencyMs ?? 600), () => setState((st) => reduce(st, r)));
+      const rs = results.filter((x) => x.round === round);
+      const t = t0;
+      at(t, () => setState((st) => reduce(st, { type: "dispatch", round, itemId: item.id })));
+      for (const r of rs) at(t + (r.latencyMs ?? 600), () => setState((st) => reduce(st, r)));
+      t0 += Math.max(1500, ...rs.map((r) => (r.latencyMs ?? 600) + 1000));
     });
-    const end = 400 + items.length * p.gapMs + 2500;
-    at(end, () => { setState((st) => reduce(st, { type: "done" })); onEnd?.(); });
+    at(t0 + 800, () => { setState((st) => reduce(st, { type: "done" })); onEnd?.(); });
   }, [clear]);
 
   useEffect(() => clear, [clear]);

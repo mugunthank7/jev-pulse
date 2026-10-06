@@ -1,34 +1,35 @@
 import { animate, motion, useMotionValue, useTransform } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { CAT_COLOR, CATS, ENGINE_COLOR, ENGINE_ORDER, engineStats, useNow, type Cat, type Cell, type EngineId, type SortState } from "../lib/sort";
-const CAT_LABEL: Record<Cat, string> = { exact: "EXACT", substitute: "SUBSTITUTE", not_a_match: "NO MATCH" };
+import { CATS, ENGINE_ORDER, engineStats, useNow, type Cat, type Cell, type EngineId, type SortState } from "../lib/sort";
+import { CAT_THEME, ENGINE_THEME, RIGHT, WRONG } from "../lib/theme";
 
-// Scene geometry (viewBox units). Source on the left, engines in the middle, category branches on the right.
+// Scene geometry (viewBox units): source on the left, three engine "data flow lines", category branches on the right.
 const W = 1000, H = 720;
-const SRC = { x: 100, y: 370 };
-const ENG: Record<EngineId, { x: number; y: number }> = { jev: { x: 430, y: 138 }, gemini: { x: 430, y: 370 }, claude: { x: 430, y: 602 } };
-const CAT_X = 835;
-const CAT_DY: Record<Cat, number> = { exact: -68, substitute: 0, not_a_match: 68 };
-const NODE_W = 176, NODE_H = 76;
+const SRC = { x: 98, y: 360 };
+const ENG: Record<EngineId, { x: number; y: number }> = { jev: { x: 440, y: 130 }, gemini: { x: 440, y: 360 }, claude: { x: 440, y: 590 } };
+const CAT_X = 850;
+const CAT_DY: Record<Cat, number> = { exact: -66, substitute: 0, not_a_match: 66 };
+const NODE_W = 190, NODE_H = 80, BUBBLE = 31;
+/** Only used for the very first envelope of a run, before an engine's real latency is known. */
+const FIRST_GUESS_MS: Record<EngineId, number> = { jev: 500, gemini: 1500, claude: 2200 };
+
 type P = { x: number; y: number };
 const catPos = (e: EngineId, c: Cat): P => ({ x: CAT_X, y: ENG[e].y + CAT_DY[c] });
-
-const legIn = (e: EngineId): [P, P] => [{ x: SRC.x + 48, y: SRC.y }, { x: ENG[e].x - NODE_W / 2, y: ENG[e].y }];
-const legOut = (e: EngineId, c: Cat): [P, P] => [{ x: ENG[e].x + NODE_W / 2, y: ENG[e].y }, { x: catPos(e, c).x - 31, y: catPos(e, c).y }];
+const legIn = (e: EngineId): [P, P] => [{ x: SRC.x + 50, y: SRC.y }, { x: ENG[e].x - NODE_W / 2, y: ENG[e].y }];
+const legOut = (e: EngineId, c: Cat): [P, P] => [{ x: ENG[e].x + NODE_W / 2, y: ENG[e].y }, { x: catPos(e, c).x - BUBBLE, y: catPos(e, c).y }];
 const bez = ([a, b]: [P, P], t: number): P => {
   const dx = (b.x - a.x) * 0.55, c1 = { x: a.x + dx, y: a.y }, c2 = { x: b.x - dx, y: b.y }, u = 1 - t;
   return { x: u ** 3 * a.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t ** 3 * b.x, y: u ** 3 * a.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t ** 3 * b.y };
 };
-const edge = ([a, b]: [P, P]) => { const dx = (b.x - a.x) * 0.55; return `M${a.x},${a.y} C${a.x + dx},${a.y} ${b.x - dx},${b.y} ${b.x},${b.y}`; };
-
+const edge = ([a, b]: [P, P]) => { const dx = (b.x - a.x) * 0.55; return `M${a.x},${a.y} C${a.x + dx},${a.y} ${b.x - dx},${a.y === b.y ? a.y : b.y} ${b.x},${b.y}`; };
 const ms = (n: number) => (n < 1000 ? `${Math.round(n)} ms` : `${(n / 1000).toFixed(2)} s`);
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
-function EnvelopeShape({ color }: { color: string }) {
+function EnvelopeShape({ color, fill = "#fff" }: { color: string; fill?: string }) {
   return (
-    <g filter="url(#glow)">
-      <rect x={-16} y={-11} width={32} height={22} rx={3.5} fill={color} fillOpacity={0.92} stroke="#fff" strokeOpacity={0.9} strokeWidth={1.2} />
-      <path d="M-16,-9 L0,3 L16,-9" fill="none" stroke="#fff" strokeOpacity={0.85} strokeWidth={1.2} />
+    <g style={{ filter: "drop-shadow(0 3px 5px rgba(60,70,110,0.28))" }}>
+      <rect x={-17} y={-12} width={34} height={24} rx={4} fill={fill} stroke={color} strokeWidth={2.2} />
+      <path d="M-17,-10 L0,3 L17,-10" fill="none" stroke={color} strokeWidth={2.2} strokeLinejoin="round" />
     </g>
   );
 }
@@ -36,138 +37,154 @@ function EnvelopeShape({ color }: { color: string }) {
 type Landed = Record<EngineId, Record<Cat, { n: number; ok: number; lastOk: boolean }>>;
 const emptyLanded = (): Landed => Object.fromEntries(ENGINE_ORDER.map((e) => [e, Object.fromEntries(CATS.map((c) => [c, { n: 0, ok: 0, lastOk: true }]))])) as Landed;
 
-/** One envelope: source -> engine (waits there for the engine's real answer) -> its chosen category. */
-function Envelope({ engine, cell, speed, onLand, onGone }: { engine: EngineId; cell: Cell | undefined; speed: number; onLand: (c: Cat, ok: boolean) => void; onGone: () => void }) {
-  const color = ENGINE_COLOR[engine];
+/**
+ * One envelope on one engine's data-flow line. Its travel to the engine is paced by that engine's real latency
+ * (it creeps toward the engine at the speed the model is actually answering), then it snaps to the engine when
+ * the answer lands and flies on to the category the engine chose. The state machine runs on timers, not animation
+ * frames, so it stays correct in background tabs; Motion only draws the movement.
+ */
+function Envelope({ engine, cell, expectedMs, speed, onLand, onGone }: { engine: EngineId; cell: Cell | undefined; expectedMs: number; speed: number; onLand: (c: Cat, ok: boolean) => void; onGone: () => void }) {
+  const theme = ENGINE_THEME[engine];
   const t = useMotionValue(0);
   const leg = useRef<[P, P]>(legIn(engine));
-  const [phase, setPhase] = useState<"in" | "wait" | "out" | "fail">("in");
+  const [phase, setPhase] = useState<"flying" | "arrive" | "out" | "fail">("flying");
   const x = useTransform(t, (v) => bez(leg.current, v).x);
   const y = useTransform(t, (v) => bez(leg.current, v).y);
-
-  // Motion drives the visual movement; the state machine runs on timers so it never depends on animation frames
-  // (browsers pause rAF in background tabs, which would otherwise freeze envelopes mid-flight).
-  useEffect(() => {
-    const a = animate(t, 1, { duration: 0.4 / speed, ease: [0.4, 0, 0.2, 1] });
-    const id = window.setTimeout(() => setPhase("wait"), 400 / speed);
-    return () => { a.stop(); clearTimeout(id); };
-  }, [t, speed]);
-
-  // Once the engine has answered, decide where the envelope goes. (Kept separate from the animation below:
-  // an effect's cleanup runs when its deps change, which would otherwise cancel the flight we just started.)
   const target = useRef<{ cat: Cat; ok: boolean } | null>(null);
+
+  // Creep toward the engine at the model's own pace (never quite arriving until it answers).
   useEffect(() => {
-    if (phase !== "wait" || !cell || cell.status === "pending") return;
+    const a = animate(t, 0.93, { duration: Math.max(0.25, expectedMs / 1000) / speed, ease: "linear" });
+    return () => a.stop();
+  }, [t, expectedMs, speed]);
+
+  useEffect(() => {
+    if (phase !== "flying" || !cell || cell.status === "pending") return;
     if (cell.status === "error" || !cell.predicted) { setPhase("fail"); return; }
     target.current = { cat: cell.predicted, ok: !!cell.correct };
-    leg.current = legOut(engine, cell.predicted); t.set(0); setPhase("out");
-  }, [phase, cell, engine, t]);
+    animate(t, 1, { duration: 0.12 / speed, ease: "easeOut" });
+    setPhase("arrive");
+  }, [phase, cell, t, speed]);
 
   useEffect(() => {
-    if (phase === "fail") { const id = window.setTimeout(onGone, 1500); return () => clearTimeout(id); }
+    if (phase !== "arrive") return;
+    const id = window.setTimeout(() => { leg.current = legOut(engine, target.current!.cat); t.set(0); setPhase("out"); }, 130 / speed);
+    return () => clearTimeout(id);
+  }, [phase, engine, t, speed]);
+
+  useEffect(() => {
+    if (phase === "fail") { const id = window.setTimeout(onGone, 1600); return () => clearTimeout(id); }
     if (phase !== "out" || !target.current) return;
     const { cat, ok } = target.current;
-    const a = animate(t, 1, { duration: 0.5 / speed, ease: [0.4, 0, 0.2, 1] });
-    const id = window.setTimeout(() => { onLand(cat, ok); onGone(); }, 500 / speed);
+    const a = animate(t, 1, { duration: 0.45 / speed, ease: [0.4, 0, 0.2, 1] });
+    const id = window.setTimeout(() => { onLand(cat, ok); onGone(); }, 450 / speed);
     return () => { a.stop(); clearTimeout(id); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
   return (
     <motion.g style={{ x, y }}>
-      <motion.g animate={phase === "wait" ? { rotate: [-9, 9, -9], scale: [1, 1.12, 1] } : { rotate: 0, scale: 1 }} transition={phase === "wait" ? { repeat: Infinity, duration: 0.5 } : { duration: 0.1 }}>
-        <EnvelopeShape color={phase === "fail" ? "#f43f5e" : color} />
+      <motion.g animate={phase === "arrive" ? { scale: [1, 1.3, 1] } : { scale: 1 }} transition={{ duration: 0.2 }}>
+        <EnvelopeShape color={phase === "fail" ? WRONG : theme.line} fill={phase === "fail" ? "#ffe4e9" : "#fff"} />
       </motion.g>
-      {phase === "fail" && <text y={-18} textAnchor="middle" fontSize={15} fill="#fb7185" fontWeight={700}>✗ error</text>}
+      {phase === "fail" && <text y={-20} textAnchor="middle" fontSize={14} fill={WRONG} fontWeight={700}>✗ failed</text>}
     </motion.g>
   );
 }
 
 export function MindMap({ state, speed }: { state: SortState; speed: number }) {
-  const [envs, setEnvs] = useState<{ key: string; engine: EngineId; round: number }[]>([]);
+  const [envs, setEnvs] = useState<{ key: string; engine: EngineId; round: number; expectedMs: number }[]>([]);
   const [landed, setLanded] = useState<Landed>(emptyLanded);
   const seen = useRef(new Set<string>());
   const current = state.items[state.round];
+  const stats = Object.fromEntries(ENGINE_ORDER.map((e) => [e, engineStats(state.cells[e])])) as Record<EngineId, ReturnType<typeof engineStats>>;
 
-  // New round -> launch one envelope per engine, all at the same instant.
+  // New round -> launch one envelope per engine, all at the same instant, each paced to its engine's measured speed.
   useEffect(() => {
     if (state.round < 0) return;
-    const fresh = ENGINE_ORDER.filter((e) => state.engines.some((m) => m.id === e)).map((e) => ({ key: `${state.runId}-${state.round}-${e}`, engine: e, round: state.round })).filter((x) => !seen.current.has(x.key));
+    const fresh = ENGINE_ORDER.filter((e) => state.engines.some((m) => m.id === e))
+      .map((e) => ({ key: `${state.runId}-${state.round}-${e}`, engine: e, round: state.round, expectedMs: stats[e].n ? stats[e].avgLatencyMs : FIRST_GUESS_MS[e] }))
+      .filter((x) => !seen.current.has(x.key));
     if (!fresh.length) return;
     fresh.forEach((f) => seen.current.add(f.key));
     setEnvs((cur) => [...cur, ...fresh]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.round, state.runId, state.engines]);
 
   const pending = ENGINE_ORDER.some((e) => state.cells[e][state.round]?.status === "pending");
   const now = useNow(pending);
-  const stats = Object.fromEntries(ENGINE_ORDER.map((e) => [e, engineStats(state.cells[e])])) as Record<EngineId, ReturnType<typeof engineStats>>;
   const meta = (e: EngineId) => state.engines.find((m) => m.id === e);
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="h-full w-full" role="img" aria-label="Mind map: search-result envelopes are sorted by Jev, Gemini and Claude into exact, substitute and no-match">
+    <svg viewBox={`0 0 ${W} ${H}`} className="h-full w-full" role="img" aria-label="Search-result envelopes travel along three lines, one per engine (Jev, Gemini, Claude), and are sorted into exact, substitute or no-match">
       <defs>
-        <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3" result="b" /><feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
-        <radialGradient id="bg" cx="40%" cy="50%" r="75%"><stop offset="0%" stopColor="#12172a" /><stop offset="100%" stopColor="#05060b" /></radialGradient>
+        <style>{`@keyframes flow{to{stroke-dashoffset:-22}} .flow{animation:flow 1.1s linear infinite}`}</style>
       </defs>
-      <rect width={W} height={H} fill="url(#bg)" />
 
-      {/* column captions */}
-      {[["SOURCE", SRC.x], ["ENGINES", 430], ["SORTED INTO", CAT_X]].map(([t, x]) => <text key={t as string} x={x as number} y={20} textAnchor="middle" fontSize={11} letterSpacing={3} fill="#ffffff55" fontFamily="ui-monospace, monospace">{t}</text>)}
+      {/* three data-flow lanes */}
+      {ENGINE_ORDER.map((e) => <rect key={e} x={196} y={ENG[e].y - 100} width={782} height={200} rx={28} fill={ENGINE_THEME[e].soft} fillOpacity={0.5} />)}
 
-      {/* branches */}
+      <g fontSize={11} letterSpacing={2.5} fill="#8a93ad" fontWeight={600} textAnchor="middle">
+        <text x={SRC.x} y={22}>SOURCE</text><text x={ENG.jev.x} y={22}>ENGINE</text><text x={CAT_X} y={22}>SORTED INTO</text>
+      </g>
+
+      {/* the lines */}
       {ENGINE_ORDER.map((e) => (
         <g key={e}>
-          <path d={edge(legIn(e))} fill="none" stroke={ENGINE_COLOR[e]} strokeOpacity={0.22} strokeWidth={2} />
-          {CATS.map((c) => <path key={c} d={edge(legOut(e, c))} fill="none" stroke={CAT_COLOR[c]} strokeOpacity={0.2} strokeWidth={2} />)}
+          <path d={edge(legIn(e))} fill="none" stroke={ENGINE_THEME[e].line} strokeWidth={3.5} strokeOpacity={0.35} />
+          <path d={edge(legIn(e))} fill="none" stroke={ENGINE_THEME[e].line} strokeWidth={3} strokeLinecap="round" strokeDasharray="2 20" className="flow" />
+          {CATS.map((c) => <path key={c} d={edge(legOut(e, c))} fill="none" stroke={CAT_THEME[c].line} strokeWidth={2.5} strokeOpacity={0.5} />)}
         </g>
       ))}
 
       {/* source */}
       <g transform={`translate(${SRC.x},${SRC.y})`}>
-        <circle r={62} fill="#7aa2ff" fillOpacity={0.06} />
-        <circle r={46} fill="#0d1226" stroke="#9db6ff" strokeOpacity={0.8} strokeWidth={2} />
-        <path d="M-17,-4 L-9,-18 H9 L17,-4 V12 a4,4 0 0 1 -4,4 H-13 a4,4 0 0 1 -4,-4 Z M-17,-4 H-6 L-3,2 H3 L6,-4 H17" fill="none" stroke="#c7d5ff" strokeWidth={2} strokeLinejoin="round" />
-        <text y={64} textAnchor="middle" fontSize={13} fontWeight={600} fill="#e7ebf5">Search results</text>
-        <text y={80} textAnchor="middle" fontSize={10} fill="#ffffff66" fontFamily="ui-monospace, monospace">Amazon ESCI · human-labeled</text>
-        <text y={96} textAnchor="middle" fontSize={11} fill="#9db6ff" fontFamily="ui-monospace, monospace">{state.round >= 0 ? `item ${state.round + 1} / ${state.items.length}` : "idle"}</text>
+        <circle r={66} fill="#e8e6ff" fillOpacity={0.6} />
+        <circle r={48} fill="#fff" stroke="#b7b2f5" strokeWidth={2.5} style={{ filter: "drop-shadow(0 6px 14px rgba(110,100,200,0.25))" }} />
+        <path d="M-18,-5 L-10,-19 H10 L18,-5 V13 a4,4 0 0 1 -4,4 H-14 a4,4 0 0 1 -4,-4 Z M-18,-5 H-6 L-3,2 H3 L6,-5 H18" fill="none" stroke="#7b72e0" strokeWidth={2.4} strokeLinejoin="round" />
+        <text y={72} textAnchor="middle" fontSize={15} fontWeight={700} fill="#26304d">Search results</text>
+        <text y={90} textAnchor="middle" fontSize={11.5} fill="#7a84a3">{state.round >= 0 ? `item ${state.round + 1} of ${state.items.length}` : "waiting to start"}</text>
       </g>
       {current && (
-        <g transform={`translate(${SRC.x - 82},${SRC.y + 112})`}>
-          <rect width={164} height={96} rx={10} fill="#0d1226" stroke="#ffffff22" />
-          <text x={10} y={20} fontSize={10} fill="#9db6ff" fontFamily="ui-monospace, monospace">🔍 {clip(current.query, 22)}</text>
-          <text x={10} y={40} fontSize={10.5} fill="#e7ebf5">{clip(current.title, 25)}</text>
-          <text x={10} y={54} fontSize={10.5} fill="#e7ebf5">{clip(current.title.slice(25), 25)}</text>
-          <text x={10} y={82} fontSize={10} fill="#ffffff77" fontFamily="ui-monospace, monospace">human label: <tspan fill={CAT_COLOR[current.label]} fontWeight={700}>{CAT_LABEL[current.label].toLowerCase()}</tspan></text>
+        <g transform={`translate(${SRC.x - 86},${SRC.y + 112})`}>
+          <rect width={172} height={118} rx={14} fill="#fff" stroke="#e3e5f3" style={{ filter: "drop-shadow(0 4px 10px rgba(60,70,110,0.12))" }} />
+          <text x={12} y={22} fontSize={11} fill="#7b72e0" fontWeight={700}>🔍 {clip(current.query, 22)}</text>
+          <text x={12} y={42} fontSize={11.5} fill="#26304d">{clip(current.title, 26)}</text>
+          <text x={12} y={58} fontSize={11.5} fill="#26304d">{clip(current.title.slice(26), 26)}</text>
+          <text x={12} y={84} fontSize={10.5} fill="#7a84a3">human label</text>
+          <rect x={12} y={91} width={CAT_THEME[current.label].label.length * 7.4 + 16} height={19} rx={9.5} fill={CAT_THEME[current.label].soft} />
+          <text x={20} y={104.5} fontSize={10.5} fontWeight={700} fill={CAT_THEME[current.label].ink}>{CAT_THEME[current.label].label}</text>
         </g>
       )}
 
       {/* engines + their three branches */}
       {ENGINE_ORDER.map((e) => {
-        const m = meta(e), cell = state.cells[e][state.round], st = stats[e], busy = cell?.status === "pending";
+        const m = meta(e), cell = state.cells[e][state.round], st = stats[e], busy = cell?.status === "pending", th = ENGINE_THEME[e];
         const shown = busy ? now - (state.dispatchedAt ?? now) : cell?.status === "done" ? (cell.latencyMs ?? 0) : null;
-        const color = ENGINE_COLOR[e], { x, y } = ENG[e];
+        const { x, y } = ENG[e];
         return (
           <g key={e}>
             <g transform={`translate(${x},${y})`}>
-              {busy && <motion.rect x={-NODE_W / 2 - 6} y={-NODE_H / 2 - 6} width={NODE_W + 12} height={NODE_H + 12} rx={20} fill="none" stroke={color} strokeWidth={2} animate={{ opacity: [0.2, 0.9, 0.2] }} transition={{ repeat: Infinity, duration: 0.9 }} />}
-              <rect x={-NODE_W / 2} y={-NODE_H / 2} width={NODE_W} height={NODE_H} rx={16} fill="#0d1226" stroke={color} strokeWidth={2} style={{ filter: `drop-shadow(0 0 14px ${color}55)` }} />
-              <text x={-NODE_W / 2 + 14} y={-14} fontSize={15} fontWeight={700} fill={color}>{m?.label ?? e}</text>
-              <text x={-NODE_W / 2 + 14} y={2} fontSize={9} fill="#ffffff55" fontFamily="ui-monospace, monospace">{clip(m?.model ?? "", 26)}</text>
-              <text x={-NODE_W / 2 + 14} y={26} fontSize={19} fontWeight={700} fill="#fff" fontFamily="ui-monospace, monospace">{shown === null ? "—" : ms(shown)}</text>
-              <text x={NODE_W / 2 - 12} y={26} textAnchor="end" fontSize={11} fill="#ffffff88" fontFamily="ui-monospace, monospace">{st.n ? `${st.correct}/${st.n} ✓` : ""}</text>
+              {busy && <motion.rect x={-NODE_W / 2 - 7} y={-NODE_H / 2 - 7} width={NODE_W + 14} height={NODE_H + 14} rx={24} fill="none" stroke={th.line} strokeWidth={3} animate={{ opacity: [0.15, 0.8, 0.15] }} transition={{ repeat: Infinity, duration: 0.9 }} />}
+              <rect x={-NODE_W / 2} y={-NODE_H / 2} width={NODE_W} height={NODE_H} rx={20} fill="#fff" stroke={th.line} strokeWidth={2.5} style={{ filter: "drop-shadow(0 8px 16px rgba(60,70,110,0.16))" }} />
+              <rect x={-NODE_W / 2} y={-NODE_H / 2} width={9} height={NODE_H} rx={4.5} fill={th.line} />
+              <text x={-NODE_W / 2 + 22} y={-14} fontSize={17} fontWeight={800} fill={th.ink}>{m?.label ?? e}</text>
+              <text x={-NODE_W / 2 + 22} y={2} fontSize={10} fill="#8a93ad">{clip(m?.model ?? "", 30)}</text>
+              <text x={-NODE_W / 2 + 22} y={27} fontSize={21} fontWeight={800} fill="#26304d" style={{ fontVariantNumeric: "tabular-nums" }}>{shown === null ? "—" : ms(shown)}</text>
+              {st.n > 0 && <text x={NODE_W / 2 - 14} y={27} textAnchor="end" fontSize={12} fontWeight={700} fill={th.ink}>{st.correct}/{st.n} right</text>}
             </g>
-            {state.retry[e] && <text x={x} y={y + 58} textAnchor="middle" fontSize={10} fill="#fbbf24">⚠ {state.retry[e]}</text>}
-            {cell?.status === "error" && <text x={x} y={y + 58} textAnchor="middle" fontSize={10} fill="#fb7185">{/credits/i.test(cell.error ?? "") ? "out of OpenRouter credits" : "request failed"}</text>}
+            {state.retry[e] && <text x={x} y={y + 62} textAnchor="middle" fontSize={11} fill="#b7860b">⚠ {state.retry[e]}</text>}
+            {cell?.status === "error" && <text x={x} y={y + 62} textAnchor="middle" fontSize={11} fill={WRONG}>{/credits/i.test(cell.error ?? "") ? "out of OpenRouter credits" : "request failed"}</text>}
 
             {CATS.map((c) => {
-              const p = catPos(e, c), l = landed[e][c];
+              const p = catPos(e, c), l = landed[e][c], ct = CAT_THEME[c];
               return (
                 <g key={c} transform={`translate(${p.x},${p.y})`}>
-                  <circle r={31} fill={CAT_COLOR[c]} fillOpacity={0.1} stroke={CAT_COLOR[c]} strokeOpacity={0.7} strokeWidth={1.8} />
-                  {l.n > 0 && <motion.circle key={`ring-${l.n}`} r={31} fill="none" stroke={l.lastOk ? "#34d399" : "#fb7185"} strokeWidth={3} initial={{ scale: 1, opacity: 0.95 }} animate={{ scale: 1.6, opacity: 0 }} transition={{ duration: 0.7 }} />}
-                  <text y={-10} textAnchor="middle" fontSize={7.5} letterSpacing={0.5} fill={CAT_COLOR[c]} fontWeight={700}>{CAT_LABEL[c]}</text>
-                  <motion.text key={`num-${l.n}`} y={11} textAnchor="middle" fontSize={21} fontWeight={700} fill="#fff" initial={{ scale: 1.5 }} animate={{ scale: 1 }}>{l.n}</motion.text>
-                  <text y={25} textAnchor="middle" fontSize={8.5} fill="#ffffff88" fontFamily="ui-monospace, monospace">{l.n ? `${l.ok}✓ ${l.n - l.ok}✗` : ""}</text>
+                  <circle r={BUBBLE} fill="#fff" stroke={ct.line} strokeWidth={2.5} style={{ filter: "drop-shadow(0 4px 8px rgba(60,70,110,0.12))" }} />
+                  <circle r={BUBBLE - 4} fill={ct.soft} fillOpacity={0.7} />
+                  {l.n > 0 && <motion.circle key={`ring-${l.n}`} r={BUBBLE} fill="none" stroke={l.lastOk ? RIGHT : WRONG} strokeWidth={4} initial={{ scale: 1, opacity: 0.95 }} animate={{ scale: 1.55, opacity: 0 }} transition={{ duration: 0.7 }} />}
+                  <text y={-9} textAnchor="middle" fontSize={7.5} letterSpacing={0.4} fill={ct.ink} fontWeight={800}>{ct.label}</text>
+                  <motion.text key={`num-${l.n}`} y={12} textAnchor="middle" fontSize={22} fontWeight={800} fill="#26304d" initial={{ scale: 1.5 }} animate={{ scale: 1 }}>{l.n}</motion.text>
                 </g>
               );
             })}
@@ -177,7 +194,7 @@ export function MindMap({ state, speed }: { state: SortState; speed: number }) {
 
       {/* envelopes in flight */}
       {envs.map((en) => (
-        <Envelope key={en.key} engine={en.engine} speed={speed} cell={state.cells[en.engine][en.round]}
+        <Envelope key={en.key} engine={en.engine} speed={speed} expectedMs={en.expectedMs} cell={state.cells[en.engine][en.round]}
           onLand={(c, ok) => setLanded((cur) => ({ ...cur, [en.engine]: { ...cur[en.engine], [c]: { n: cur[en.engine][c].n + 1, ok: cur[en.engine][c].ok + (ok ? 1 : 0), lastOk: ok } } }))}
           onGone={() => setEnvs((cur) => cur.filter((x) => x.key !== en.key))} />
       ))}

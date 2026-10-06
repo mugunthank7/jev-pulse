@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@jev-pulse/schema": "^0.1.0",
+    "gifenc": "^1.0.3",
     "motion": "^14.0.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
