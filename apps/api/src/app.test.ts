@@ -169,21 +169,32 @@ describe("mind-map sort", () => {
     expect(() => parseCategory('{"category":"weird"}')).toThrow();
   });
 
-  it("dispatches one envelope per round to every engine and reports correctness", async () => {
+  it("lets each engine take its next item as soon as it finishes (independent lanes)", async () => {
     const { runSort } = await import("./sort/run.ts");
-    const items = [{ id: "1", query: "q", title: "t", brand: "", label: "exact" as const }, { id: "2", query: "q", title: "t2", brand: "", label: "substitute" as const }];
+    const items = [1, 2, 3, 4].map((n) => ({ id: String(n), query: "q", title: `t${n}`, brand: "", label: "exact" as const }));
     const lanes = [{ id: "jev" as const, label: "J", model: "j" }, { id: "claude" as const, label: "C", model: "c" }];
-    const events: { type: string; lane?: string; correct?: boolean; error?: string }[] = [];
-    let cCalls = 0;
-    await runSort(items, lanes, async (lane, item) => {
-      if (lane.id === "claude" && cCalls++ === 0) throw new Error("c 429: slow down");
-      return { predicted: lane.id === "jev" ? item.label : "not_a_match", latencyMs: 5, costUsd: 0.001 };
-    }, (e) => void events.push(e), { gapMs: 0 });
-    const res = events.filter((e) => e.type === "result");
-    expect(events.filter((e) => e.type === "dispatch")).toHaveLength(2);
-    expect(res).toHaveLength(4);
-    expect(res.filter((r) => r.lane === "jev").every((r) => r.correct)).toBe(true);
-    expect(res.filter((r) => r.lane === "claude").every((r) => r.correct === false)).toBe(true);
-    expect(events.some((e) => e.type === "retry")).toBe(true);
+    const events: { type: string; lane?: string; round?: number; t?: number; correct?: boolean }[] = [];
+    // Jev answers in ~5 ms, Claude in ~60 ms.
+    await runSort(items, lanes, async (lane) => { await new Promise((r) => setTimeout(r, lane.id === "jev" ? 5 : 60)); return { predicted: "exact", latencyMs: lane.id === "jev" ? 5 : 60, costUsd: 0.001 }; }, (e) => void events.push(e));
+    const dispatches = (l: string) => events.filter((e) => e.type === "dispatch" && e.lane === l);
+    expect(dispatches("jev")).toHaveLength(4);
+    expect(dispatches("claude")).toHaveLength(4);
+    // Jev has pulled its LAST item before Claude has finished its FIRST result.
+    const jevLastDispatch = dispatches("jev").at(-1)!.t!;
+    const claudeFirstResult = events.find((e) => e.type === "result" && e.lane === "claude")!.t!;
+    expect(jevLastDispatch).toBeLessThan(claudeFirstResult);
+    expect(events.filter((e) => e.type === "result" && e.correct)).toHaveLength(8);
+    expect(events.at(-1)!.type).toBe("done");
+  }, 30_000);
+
+  it("retries a transient 429 on one lane without blocking the others", async () => {
+    const { runSort } = await import("./sort/run.ts");
+    const items = [{ id: "1", query: "q", title: "t", brand: "", label: "exact" as const }];
+    const lanes = [{ id: "jev" as const, label: "J", model: "j" }, { id: "claude" as const, label: "C", model: "c" }];
+    const events: { type: string; lane?: string }[] = [];
+    let calls = 0;
+    await runSort(items, lanes, async (lane) => { if (lane.id === "claude" && calls++ === 0) throw new Error("c 429: slow down"); return { predicted: "exact", latencyMs: 1, costUsd: 0 }; }, (e) => void events.push(e));
+    expect(events.some((e) => e.type === "retry" && e.lane === "claude")).toBe(true);
+    expect(events.filter((e) => e.type === "result")).toHaveLength(2);
   }, 30_000);
 });

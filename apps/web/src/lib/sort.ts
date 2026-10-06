@@ -11,29 +11,27 @@ export type Cell = { status: "pending" | "done" | "error"; predicted?: Cat; corr
 /** Wire format shared with the API (SSE) and the recorded tape. */
 export type SortEvent =
   | { type: "start"; lanes: EngineMeta[]; items: PairItem[] }
-  | { type: "dispatch"; round: number; itemId: string }
-  | { type: "retry"; round: number; lane: EngineId; reason: string; waitMs: number }
-  | { type: "result"; round: number; itemId: string; lane: EngineId; predicted?: Cat; correct?: boolean; latencyMs?: number; costUsd?: number; error?: string }
+  | { type: "dispatch"; lane: EngineId; round: number; itemId: string; t: number }
+  | { type: "retry"; lane: EngineId; round: number; reason: string; waitMs: number; t: number }
+  | { type: "result"; lane: EngineId; round: number; itemId: string; predicted?: Cat; correct?: boolean; latencyMs?: number; costUsd?: number; error?: string; t: number }
   | { type: "done" };
 
 export type Tape = { meta: { recordedAt: string; synthetic?: boolean; note?: string }; events: SortEvent[] };
 
 export type SortState = {
   runId: number; mode: "live" | "replay"; running: boolean; done: boolean; error: string | null; synthetic: boolean; recordedAt: string | null;
-  engines: EngineMeta[]; items: PairItem[]; round: number; dispatchedAt: number | null;
+  engines: EngineMeta[]; items: PairItem[];
+  /** Each engine works through the shared inbox at its own pace: the item it is on, and when it took it. */
+  laneRound: Record<EngineId, number>; laneStartedAt: Record<EngineId, number | null>;
   cells: Record<EngineId, Record<number, Cell>>; retry: Partial<Record<EngineId, string>>;
 };
 
-const blank = (): SortState => ({ runId: 0, mode: "replay", running: false, done: false, error: null, synthetic: false, recordedAt: null, engines: [], items: [], round: -1, dispatchedAt: null, cells: { jev: {}, gemini: {}, claude: {} }, retry: {} });
+const blank = (): SortState => ({ runId: 0, mode: "replay", running: false, done: false, error: null, synthetic: false, recordedAt: null, engines: [], items: [], laneRound: { jev: -1, gemini: -1, claude: -1 }, laneStartedAt: { jev: null, gemini: null, claude: null }, cells: { jev: {}, gemini: {}, claude: {} }, retry: {} });
 
 function reduce(st: SortState, e: SortEvent): SortState {
   switch (e.type) {
     case "start": return { ...st, engines: e.lanes, items: e.items };
-    case "dispatch": {
-      const cells = { ...st.cells };
-      for (const l of st.engines) cells[l.id] = { ...cells[l.id], [e.round]: { status: "pending" } };
-      return { ...st, round: e.round, dispatchedAt: performance.now(), cells, retry: {} };
-    }
+    case "dispatch": return { ...st, laneRound: { ...st.laneRound, [e.lane]: e.round }, laneStartedAt: { ...st.laneStartedAt, [e.lane]: performance.now() }, cells: { ...st.cells, [e.lane]: { ...st.cells[e.lane], [e.round]: { status: "pending" } } } };
     case "retry": return { ...st, retry: { ...st.retry, [e.lane]: `${e.reason}, retrying in ${Math.round(e.waitMs / 1000)}s` } };
     case "result": {
       const cell: Cell = e.error ? { status: "error", error: e.error } : { status: "done", predicted: e.predicted, correct: e.correct, latencyMs: e.latencyMs, costUsd: e.costUsd };
@@ -98,21 +96,15 @@ export function useSortRun() {
     }
     const start = tape.events.find((e): e is Extract<SortEvent, { type: "start" }> => e.type === "start")!;
     const items = start.items.slice(0, p.limit);
-    const results = tape.events.filter((e): e is Extract<SortEvent, { type: "result" }> => e.type === "result");
+    // Replay with the RECORDED timing: every engine took its next item the moment it finished the last, so Jev
+    // races through the inbox while Claude is still on its third. Nothing here is re-timed or invented.
+    const timed = tape.events.filter((e): e is Exclude<SortEvent, { type: "start" } | { type: "done" }> => e.type !== "start" && e.type !== "done" && e.round < items.length);
     setState({ ...blank(), runId: id, mode: "replay", running: true, synthetic: !!tape.meta.synthetic, recordedAt: tape.meta.recordedAt });
     const at = (ms: number, fn: () => void) => { timers.current.push(window.setTimeout(fn, ms / p.speed)); };
     at(0, () => setState((st) => reduce(st, { type: "start", lanes: start.lanes, items })));
-    // Each round lasts as long as its SLOWEST engine plus a short pause, and every engine answers after its
-    // RECORDED latency: Jev's envelope is done in a blink while Claude's is still travelling.
-    let t0 = 500;
-    items.forEach((item, round) => {
-      const rs = results.filter((x) => x.round === round);
-      const t = t0;
-      at(t, () => setState((st) => reduce(st, { type: "dispatch", round, itemId: item.id })));
-      for (const r of rs) at(t + (r.latencyMs ?? 600), () => setState((st) => reduce(st, r)));
-      t0 += Math.max(1500, ...rs.map((r) => (r.latencyMs ?? 600) + 1000));
-    });
-    at(t0 + 800, () => { setState((st) => reduce(st, { type: "done" })); onEnd?.(); });
+    for (const e of timed) at(500 + e.t, () => setState((st) => reduce(st, e)));
+    const end = 500 + Math.max(0, ...timed.map((e) => e.t));
+    at(end + 1200, () => { setState((st) => reduce(st, { type: "done" })); onEnd?.(); });
   }, [clear]);
 
   useEffect(() => clear, [clear]);

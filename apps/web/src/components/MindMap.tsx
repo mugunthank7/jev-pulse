@@ -96,22 +96,23 @@ export function MindMap({ state, speed }: { state: SortState; speed: number }) {
   const [envs, setEnvs] = useState<{ key: string; engine: EngineId; round: number; expectedMs: number }[]>([]);
   const [landed, setLanded] = useState<Landed>(emptyLanded);
   const seen = useRef(new Set<string>());
-  const current = state.items[state.round];
   const stats = Object.fromEntries(ENGINE_ORDER.map((e) => [e, engineStats(state.cells[e])])) as Record<EngineId, ReturnType<typeof engineStats>>;
+  const total = state.items.length;
 
-  // New round -> launch one envelope per engine, all at the same instant, each paced to its engine's measured speed.
+  // Each engine takes its NEXT inbox item the instant it finishes the previous one, so a fast engine launches a new
+  // envelope right away. Launch one envelope whenever an engine's current item changes, paced to its measured speed.
+  const laneKey = ENGINE_ORDER.map((e) => state.laneRound[e]).join(",");
   useEffect(() => {
-    if (state.round < 0) return;
-    const fresh = ENGINE_ORDER.filter((e) => state.engines.some((m) => m.id === e))
-      .map((e) => ({ key: `${state.runId}-${state.round}-${e}`, engine: e, round: state.round, expectedMs: stats[e].n ? stats[e].avgLatencyMs : FIRST_GUESS_MS[e] }))
+    const fresh = ENGINE_ORDER.filter((e) => state.laneRound[e] >= 0)
+      .map((e) => ({ key: `${state.runId}-${e}-${state.laneRound[e]}`, engine: e, round: state.laneRound[e], expectedMs: stats[e].n ? stats[e].avgLatencyMs : FIRST_GUESS_MS[e] }))
       .filter((x) => !seen.current.has(x.key));
     if (!fresh.length) return;
     fresh.forEach((f) => seen.current.add(f.key));
     setEnvs((cur) => [...cur, ...fresh]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.round, state.runId, state.engines]);
+  }, [laneKey, state.runId]);
 
-  const pending = ENGINE_ORDER.some((e) => state.cells[e][state.round]?.status === "pending");
+  const pending = ENGINE_ORDER.some((e) => state.cells[e][state.laneRound[e]]?.status === "pending");
   const now = useNow(pending);
   const meta = (e: EngineId) => state.engines.find((m) => m.id === e);
 
@@ -142,25 +143,16 @@ export function MindMap({ state, speed }: { state: SortState; speed: number }) {
         <circle r={66} fill="#e8e6ff" fillOpacity={0.6} />
         <circle r={48} fill="#fff" stroke="#b7b2f5" strokeWidth={2.5} style={{ filter: "drop-shadow(0 6px 14px rgba(110,100,200,0.25))" }} />
         <path d="M-18,-5 L-10,-19 H10 L18,-5 V13 a4,4 0 0 1 -4,4 H-14 a4,4 0 0 1 -4,-4 Z M-18,-5 H-6 L-3,2 H3 L6,-5 H18" fill="none" stroke="#7b72e0" strokeWidth={2.4} strokeLinejoin="round" />
-        <text y={72} textAnchor="middle" fontSize={15} fontWeight={700} fill="#26304d">Search results</text>
-        <text y={90} textAnchor="middle" fontSize={11.5} fill="#7a84a3">{state.round >= 0 ? `item ${state.round + 1} of ${state.items.length}` : "waiting to start"}</text>
+        <text y={72} textAnchor="middle" fontSize={15} fontWeight={700} fill="#26304d">Inbox</text>
+        <text y={90} textAnchor="middle" fontSize={11.5} fill="#7a84a3">{total ? `${total} search results` : "waiting to start"}</text>
+        <text y={106} textAnchor="middle" fontSize={10.5} fill="#9aa3bd">each engine takes the next</text>
+        <text y={120} textAnchor="middle" fontSize={10.5} fill="#9aa3bd">one as soon as it is free</text>
       </g>
-      {current && (
-        <g transform={`translate(${SRC.x - 86},${SRC.y + 112})`}>
-          <rect width={172} height={118} rx={14} fill="#fff" stroke="#e3e5f3" style={{ filter: "drop-shadow(0 4px 10px rgba(60,70,110,0.12))" }} />
-          <text x={12} y={22} fontSize={11} fill="#7b72e0" fontWeight={700}>🔍 {clip(current.query, 22)}</text>
-          <text x={12} y={42} fontSize={11.5} fill="#26304d">{clip(current.title, 26)}</text>
-          <text x={12} y={58} fontSize={11.5} fill="#26304d">{clip(current.title.slice(26), 26)}</text>
-          <text x={12} y={84} fontSize={10.5} fill="#7a84a3">human label</text>
-          <rect x={12} y={91} width={CAT_THEME[current.label].label.length * 7.4 + 16} height={19} rx={9.5} fill={CAT_THEME[current.label].soft} />
-          <text x={20} y={104.5} fontSize={10.5} fontWeight={700} fill={CAT_THEME[current.label].ink}>{CAT_THEME[current.label].label}</text>
-        </g>
-      )}
-
       {/* engines + their three branches */}
       {ENGINE_ORDER.map((e) => {
-        const m = meta(e), cell = state.cells[e][state.round], st = stats[e], busy = cell?.status === "pending", th = ENGINE_THEME[e];
-        const shown = busy ? now - (state.dispatchedAt ?? now) : cell?.status === "done" ? (cell.latencyMs ?? 0) : null;
+        const m = meta(e), r = state.laneRound[e], cell = r >= 0 ? state.cells[e][r] : undefined, st = stats[e], busy = cell?.status === "pending", th = ENGINE_THEME[e];
+        const shown = busy ? now - (state.laneStartedAt[e] ?? now) : cell?.status === "done" ? (cell.latencyMs ?? 0) : null;
+        const item = r >= 0 ? state.items[r] : undefined, doneCount = st.n + st.errors;
         const { x, y } = ENG[e];
         return (
           <g key={e}>
@@ -172,9 +164,17 @@ export function MindMap({ state, speed }: { state: SortState; speed: number }) {
               <text x={-NODE_W / 2 + 22} y={2} fontSize={10} fill="#8a93ad">{clip(m?.model ?? "", 30)}</text>
               <text x={-NODE_W / 2 + 22} y={27} fontSize={21} fontWeight={800} fill="#26304d" style={{ fontVariantNumeric: "tabular-nums" }}>{shown === null ? "—" : ms(shown)}</text>
               {st.n > 0 && <text x={NODE_W / 2 - 14} y={27} textAnchor="end" fontSize={12} fontWeight={700} fill={th.ink}>{st.correct}/{st.n} right</text>}
+              {total > 0 && <text x={NODE_W / 2 - 14} y={-14} textAnchor="end" fontSize={12} fontWeight={800} fill="#26304d" style={{ fontVariantNumeric: "tabular-nums" }}>{doneCount}/{total}</text>}
+              {total > 0 && <g><rect x={-NODE_W / 2 + 22} y={NODE_H / 2 - 11} width={NODE_W - 44} height={5} rx={2.5} fill="#eef0f8" /><rect x={-NODE_W / 2 + 22} y={NODE_H / 2 - 11} width={Math.max(0, ((NODE_W - 44) * doneCount) / total)} height={5} rx={2.5} fill={th.line} /></g>}
             </g>
-            {state.retry[e] && <text x={x} y={y + 62} textAnchor="middle" fontSize={11} fill="#b7860b">⚠ {state.retry[e]}</text>}
-            {cell?.status === "error" && <text x={x} y={y + 62} textAnchor="middle" fontSize={11} fill={WRONG}>{/credits/i.test(cell.error ?? "") ? "out of OpenRouter credits" : "request failed"}</text>}
+            {item && (
+              <g transform={`translate(${x - NODE_W / 2},${y + NODE_H / 2 + 8})`}>
+                <text x={0} y={11} fontSize={10.5} fill="#7b72e0" fontWeight={700}>🔍 {clip(item.query, 24)}</text>
+                <text x={0} y={25} fontSize={10.5} fill="#5b6685">{clip(item.title, 34)}</text>
+              </g>
+            )}
+            {state.retry[e] && <text x={x} y={y + 78} textAnchor="middle" fontSize={11} fill="#b7860b">⚠ {state.retry[e]}</text>}
+            {cell?.status === "error" && <text x={x} y={y + 78} textAnchor="middle" fontSize={11} fill={WRONG}>{/credits/i.test(cell.error ?? "") ? "out of OpenRouter credits" : "request failed"}</text>}
 
             {CATS.map((c) => {
               const p = catPos(e, c), l = landed[e][c], ct = CAT_THEME[c];

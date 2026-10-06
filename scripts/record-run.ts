@@ -31,8 +31,8 @@ const events: SortEvent[] = [];
 let errors = 0;
 await runSort(sortItems(n), lanes, (lane, item) => (lane.id === "jev" ? jevJudge(item, key) : llmJudge(lane.model, item, key)), (e) => {
   events.push(e);
-  if (e.type === "result") { if (e.error) { errors++; console.error(`  ${e.lane} round ${e.round}: ${e.error}`); } else console.log(`round ${e.round + 1}/${n} ${e.lane.padEnd(6)} -> ${e.predicted} ${e.correct ? "ok" : "WRONG"} ${Math.round(e.latencyMs ?? 0)} ms`); }
-}, { gapMs: Number(process.env.RACE_MIN_INTERVAL_MS ?? 3200) });
+  if (e.type === "result") { if (e.error) { errors++; console.error(`  ${e.lane} round ${e.round}: ${e.error}`); } else console.log(`${e.lane.padEnd(6)} item ${e.round + 1}/${n} -> ${e.predicted} ${e.correct ? "ok" : "WRONG"} ${Math.round(e.latencyMs ?? 0)} ms (t=${(e.t / 1000).toFixed(1)}s)`); }
+}, { minIntervalMs: (l) => (l.id === "jev" ? 0 : Number(process.env.RACE_LLM_INTERVAL_MS ?? 3100)) });
 
 if (errors && !process.env.ALLOW_ERRORS) {
   console.error(`\n${errors} call(s) failed (usually credits or rate limits). Not writing an incomplete tape. Fix and rerun, or set ALLOW_ERRORS=1.`);

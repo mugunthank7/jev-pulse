@@ -118,6 +118,7 @@ export function createApp(backend: DecisionBackend = createBackend()) {
       { id: "claude", label: claude.label, model: claude.model },
     ];
     const key = process.env.OPENROUTER_API_KEY;
+    const llmInterval = (l: SortLane) => (l.id === "jev" ? 0 : Number(process.env.RACE_LLM_INTERVAL_MS ?? 3100));
     const judge = async (lane: SortLane, item: Parameters<typeof jevJudge>[0]) => {
       if (!key) throw new Error("OPENROUTER_API_KEY not set");
       return lane.id === "jev" ? jevJudge(item, key) : llmJudge(lane.model, item, key);
@@ -125,7 +126,7 @@ export function createApp(backend: DecisionBackend = createBackend()) {
     return streamSSE(c, async (stream) => {
       const ac = new AbortController();
       stream.onAbort(() => ac.abort());
-      await runSort(sortItems(limit), lanes, judge, (e) => stream.writeSSE({ event: e.type, data: JSON.stringify(e) }), { gapMs: Number(process.env.RACE_MIN_INTERVAL_MS ?? 3200), signal: ac.signal });
+      await runSort(sortItems(limit), lanes, judge, (e) => stream.writeSSE({ event: e.type, data: JSON.stringify(e) }), { minIntervalMs: llmInterval, signal: ac.signal });
     });
   });
 
