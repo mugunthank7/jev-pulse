@@ -4,7 +4,7 @@
 
 Each "envelope" carries one real shopper query plus one real Amazon product (Amazon Shopping Queries / ESCI, human-labeled). A source node sends a copy of it to three engines at the same instant: **Jev**, **Gemini 3.8 Flash** and **Claude Sonnet 5.5**. Each engine sorts it into a mind-map branch (**exact / substitute / no match**); every landing is checked against the human label (green ring = right, red = wrong). The right-hand panel shows accuracy, latency and cost per engine, and a volume slider that **projects** monthly cost and processing time from the measured per-item numbers.
 
-> Add a hero GIF here: `docs/hero.gif` (see "Make the GIF" below).
+> **Demo clip:** coming soon. To see it now, clone the repo and run it (below). The page has a **Record GIF / video** button that exports a clip of the run.
 
 ## Run it
 
